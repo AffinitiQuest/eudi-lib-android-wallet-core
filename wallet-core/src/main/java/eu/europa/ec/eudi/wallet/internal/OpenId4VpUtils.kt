@@ -20,17 +20,22 @@ import com.android.identity.crypto.Algorithm
 import com.nimbusds.jose.EncryptionMethod
 import com.nimbusds.jose.JWEAlgorithm
 import com.nimbusds.jose.JWSAlgorithm
+import com.nimbusds.jose.jwk.JWK
 import com.upokecenter.cbor.CBORObject
 import eu.europa.ec.eudi.iso18013.transfer.SessionTranscriptBytes
+import eu.europa.ec.eudi.openid4vci.DefaultHttpClientFactory
 import eu.europa.ec.eudi.openid4vp.JarmConfiguration
 import eu.europa.ec.eudi.openid4vp.JwkSetSource.ByReference
+import eu.europa.ec.eudi.openid4vp.LookupPublicKeyByDIDUrl
 import eu.europa.ec.eudi.openid4vp.PreregisteredClient
 import eu.europa.ec.eudi.openid4vp.ResolvedRequestObject
 import eu.europa.ec.eudi.openid4vp.ResponseMode
 import eu.europa.ec.eudi.openid4vp.SiopOpenId4VPConfig
+import eu.europa.ec.eudi.openid4vp.SupportedClientIdScheme
 import eu.europa.ec.eudi.openid4vp.SupportedClientIdScheme.Preregistered
 import eu.europa.ec.eudi.openid4vp.SupportedClientIdScheme.X509SanDns
 import eu.europa.ec.eudi.openid4vp.SupportedClientIdScheme.X509SanUri
+import eu.europa.ec.eudi.openid4vp.SupportedClientIdScheme.DID
 import eu.europa.ec.eudi.openid4vp.VPConfiguration
 import eu.europa.ec.eudi.openid4vp.VpFormat
 import eu.europa.ec.eudi.openid4vp.VpFormats
@@ -38,7 +43,18 @@ import eu.europa.ec.eudi.wallet.transfer.openId4vp.ClientIdScheme
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.Format
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.JwsAlgorithm
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.OpenId4VpConfig
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.net.URI
+import java.net.URL
 import java.security.MessageDigest
+import java.security.PublicKey
 import java.security.SecureRandom
 import java.util.Base64
 
@@ -131,6 +147,55 @@ internal fun generateMdocGeneratedNonce(): String {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 }
 
+internal class AQDidResolver: LookupPublicKeyByDIDUrl {
+    suspend fun resolveDidDocument(didUrl: String): JsonObject  {
+        val didUrlHost = didUrl.split("#")
+        var urlString = "https://" + didUrlHost[0]
+        val url = URL("https://" + didUrlHost[0])
+        if(didUrl.last() == ':') {
+            urlString += "did.json"
+        } else if(url.path.length <= 1) {
+            urlString += "/.well-known/did.json"
+        } else {
+            urlString += "/did.json"
+        }
+
+        val finalUrl = URL(urlString)
+        DefaultHttpClientFactory().use { httpClient ->
+            val response = httpClient.get(finalUrl)
+            val string = response.bodyAsText()
+            val json = Json.decodeFromString<JsonObject>(string)
+            return json
+        }
+    }
+
+    override suspend fun resolveKey(didUrl: URI): PublicKey? {
+        val didString = didUrl.toString()
+        val components = didString.split(':')
+        if(components.size < 3) {
+            return null
+        }
+
+        val keyId = didUrl.fragment
+        val didDocument = resolveDidDocument(components[2])
+        val verificationMethods = didDocument.get("verificationMethod")?.jsonArray
+        verificationMethods?.let { methods ->
+            for(method in methods) {
+                method.jsonObject?.let { vMethod ->
+                    val vMethodKeyId = vMethod.get("id")?.jsonPrimitive?.content
+                    if(vMethodKeyId == "#$keyId") {
+                        val keyDictionary = vMethod.get("publicKeyJwk")?.jsonObject.toString()
+                        val jwk = JWK.parse(keyDictionary)
+                        return (jwk as com.nimbusds.jose.jwk.ECKey).toECPublicKey()
+                    }
+                }
+            }
+        }
+
+        return null
+    }
+}
+
 internal fun OpenId4VpConfig.toSiopOpenId4VPConfig(trust: Openid4VpX509CertificateTrust): SiopOpenId4VPConfig {
     return SiopOpenId4VPConfig(
         jarmConfiguration = JarmConfiguration.Encryption(
@@ -156,6 +221,8 @@ internal fun OpenId4VpConfig.toSiopOpenId4VPConfig(trust: Openid4VpX509Certifica
                 ClientIdScheme.X509SanDns -> X509SanDns(trust)
 
                 ClientIdScheme.X509SanUri -> X509SanUri(trust)
+
+                ClientIdScheme.DID -> DID(AQDidResolver())
             }
         },
         vpConfiguration = VPConfiguration(
@@ -188,6 +255,9 @@ internal fun List<Format>.toVpFormats(): VpFormats {
     val msoMdocVpFormat = firstOrNull { it == Format.MsoMdoc }
         ?.let { VpFormat.MsoMdoc.ES256 }
 
+    val jwtVpFormat = firstOrNull { it == Format.JwtVp }
+        ?.let { VpFormat.JwtVp.ES256 }
+
     val sdJwtVcVpFormat = filterIsInstance<Format.SdJwtVc>()
         .firstOrNull()
         ?.let {
@@ -199,7 +269,8 @@ internal fun List<Format>.toVpFormats(): VpFormats {
 
     return VpFormats(
         sdJwtVc = sdJwtVcVpFormat,
-        msoMdoc = msoMdocVpFormat
+        msoMdoc = msoMdocVpFormat,
+        jwtVp = jwtVpFormat
     )
 }
 

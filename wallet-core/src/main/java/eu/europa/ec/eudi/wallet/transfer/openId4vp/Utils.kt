@@ -21,6 +21,7 @@ import eu.europa.ec.eudi.wallet.document.DocumentManager
 import eu.europa.ec.eudi.wallet.document.IssuedDocument
 import eu.europa.ec.eudi.wallet.document.Vct
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
+import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
 import kotlinx.datetime.Clock
 import kotlinx.datetime.toJavaInstant
 
@@ -37,6 +38,15 @@ internal fun DocumentManager.getValidIssuedDocumentById(documentId: DocumentId):
 internal fun DocumentManager.getValidIssuedSdJwtVcDocuments(vct: Vct): List<IssuedDocument> {
     return getDocuments()
         .filter { it.format is SdJwtVcFormat && (it.format as SdJwtVcFormat).vct == vct }
+        .filter { !it.isKeyInvalidated }
+        .filterIsInstance<IssuedDocument>()
+        .filter { it.isValidAt(Clock.System.now().toJavaInstant()) }
+}
+
+@JvmSynthetic
+internal fun DocumentManager.getValidJwtVcJsonDocuments(type: String): List<IssuedDocument> {
+    return getDocuments()
+        .filter { it.format is W3CJwtFormat && (it.format as W3CJwtFormat).types.last() == type }
         .filter { !it.isKeyInvalidated }
         .filterIsInstance<IssuedDocument>()
         .filter { it.isValidAt(Clock.System.now().toJavaInstant()) }

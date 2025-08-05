@@ -73,7 +73,8 @@ class ProcessedMsoMdocOpenId4VpRequest(
                             id = inputDescriptor.id,
                             format = FORMAT_MSO_MDOC,
                             path = JsonPath.Companion.jsonPath("$")
-                                ?: throw IllegalStateException("Failed to create JsonPath")
+                                ?: throw IllegalStateException("Failed to create JsonPath"),
+                            path_nested = null
                         )
                     }
                 )

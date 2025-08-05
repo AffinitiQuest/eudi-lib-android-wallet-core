@@ -27,6 +27,7 @@ import eu.europa.ec.eudi.wallet.document.IssuedDocument
 import eu.europa.ec.eudi.wallet.document.UnsignedDocument
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
+import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
 import eu.europa.ec.eudi.wallet.internal.d
 import eu.europa.ec.eudi.wallet.issue.openid4vci.IssueEvent.Companion.failure
 import eu.europa.ec.eudi.wallet.issue.openid4vci.OpenId4VciManager.Companion.TAG
@@ -98,6 +99,10 @@ internal class ProcessResponse(
 
                         is SdJwtVcFormat -> credential.value.also {
                             logger?.d(TAG, "SD-JWT-VC: $it")
+                        }.toByteArray(charset = Charsets.US_ASCII)
+
+                        is W3CJwtFormat -> credential.value.also {
+                            logger?.d(TAG, "W3C-JWT: $it")
                         }.toByteArray(charset = Charsets.US_ASCII)
                     }
 

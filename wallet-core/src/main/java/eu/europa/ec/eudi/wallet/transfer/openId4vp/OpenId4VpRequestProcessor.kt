@@ -95,7 +95,7 @@ class OpenId4VpRequestProcessor(
                     // NOTE: mso_mdoc and vc+sd-jwt are supported, other formats are ignored
                     .filter {
                         it.format?.jsonObject()?.keys?.first() in listOf(
-                            FORMAT_MSO_MDOC, FORMAT_SD_JWT_VC
+                            FORMAT_MSO_MDOC, FORMAT_SD_JWT_VC, FORMAT_W3C_JWT_VC
                         )
                     }
                     .flatMap { inputDescriptor ->
@@ -112,6 +112,14 @@ class OpenId4VpRequestProcessor(
 
                             FORMAT_SD_JWT_VC -> {
                                 parseDescriptorForSdJwtVcDocument(inputDescriptor, request)
+                                    .also { requestedDoc ->
+                                        inputDescriptorMap[inputDescriptor.id] =
+                                            requestedDoc.map { it.documentId }.toList()
+                                    }
+                            }
+
+                            FORMAT_W3C_JWT_VC -> {
+                                parseDescriptorForJwtVcJsonDocument(inputDescriptor, request)
                                     .also { requestedDoc ->
                                         inputDescriptorMap[inputDescriptor.id] =
                                             requestedDoc.map { it.documentId }.toList()
@@ -150,6 +158,7 @@ class OpenId4VpRequestProcessor(
 
         return DeviceRequestProcessor.RequestedMdocDocument(
             docType = descriptor.id.value.trim(),
+            format = "mdoc",
             requested = requested,
             readerAuthentication = {
                 openid4VpX509CertificateTrustStore.getTrustResult()
@@ -207,6 +216,44 @@ class OpenId4VpRequestProcessor(
                                 readerCommonName = readerCommonName
                             )
                         }
+                )
+            }
+        )
+    }
+
+    private fun parseDescriptorForJwtVcJsonDocument(
+        descriptor: InputDescriptor,
+        request: OpenId4VpRequest,
+    ): RequestedDocuments {
+        val requestedDocType = descriptor.id
+        val requestedClaims = descriptor.constraints.fields()
+//            .mapNotNull { fieldConstraint ->
+//                val path = fieldConstraint.paths.first().value
+//                // NOTE: currently we only support simple paths e.g. $.claim or $.claim.subclaim, not $.claim[0], $.claim.*
+//                Regex("""^\$\.(\w+(?:\.\w+)*)$""").matchEntire(path)
+//                    ?.groupValues?.get(1)?.split(".")?.let {
+//                        SdJwtVcItem(it) to (fieldConstraint.intentToRetain ?: false)
+//                    }
+//            }.toMap()
+
+        return RequestedDocuments(documentManager.getValidJwtVcJsonDocuments(requestedDocType.value)
+            .map { doc ->
+                RequestedDocument(
+                    documentId = doc.id,
+                    requestedItems = emptyMap(),
+                    readerAuth =
+                        openid4VpX509CertificateTrustStore.getTrustResult()
+                            ?.let { (chain, isTrusted) ->
+                                val readerCommonName =
+                                    request.resolvedRequestObject.client.legalName() ?: ""
+                                ReaderAuth(
+                                    readerAuth = byteArrayOf(0),
+                                    readerSignIsValid = true,
+                                    readerCertificatedIsTrusted = isTrusted,
+                                    readerCertificateChain = chain,
+                                    readerCommonName = readerCommonName
+                                )
+                            }
                 )
             }
         )

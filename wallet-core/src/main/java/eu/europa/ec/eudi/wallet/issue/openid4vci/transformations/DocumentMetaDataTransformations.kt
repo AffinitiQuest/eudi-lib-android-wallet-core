@@ -21,6 +21,8 @@ import eu.europa.ec.eudi.openid4vci.CredentialIssuerMetadata
 import eu.europa.ec.eudi.openid4vci.Display
 import eu.europa.ec.eudi.openid4vci.MsoMdocCredential
 import eu.europa.ec.eudi.openid4vci.SdJwtVcCredential
+import eu.europa.ec.eudi.openid4vci.W3CSignedJwtCredential
+import eu.europa.ec.eudi.wallet.document.internal.W3CJwtCredential
 import eu.europa.ec.eudi.wallet.document.metadata.DocumentMetaData
 import eu.europa.ec.eudi.wallet.issue.openid4vci.Offer.OfferedDocument
 import java.util.Locale
@@ -32,6 +34,7 @@ fun OfferedDocument.extractDocumentMetaData(): DocumentMetaData {
     val claims = when (val config = this.configuration) {
         is MsoMdocCredential -> config.claims.fromMsoDocToDocumentClaim()
         is SdJwtVcCredential -> config.claims.fromSdJwtVToDocumentClaim()
+        is W3CSignedJwtCredential -> config.credentialDefinition.credentialSubject.fromW3CJwtToDocumentClaim()
         else -> null
     }
 
@@ -83,6 +86,13 @@ private fun Map<String, Map<String, Claim>>.fromMsoDocToDocumentClaim(): List<Do
 }
 
 private fun Map<String, Claim?>?.fromSdJwtVToDocumentClaim(): List<DocumentMetaData.Claim>? {
+    return this?.mapNotNull { (name, claim) ->
+        val claimName = DocumentMetaData.Claim.Name.SdJwtVc(name = name)
+        claim.fromMsoDocToDocumentClaim(claimName)
+    }
+}
+
+private fun Map<String, Claim?>?.fromW3CJwtToDocumentClaim(): List<DocumentMetaData.Claim>? {
     return this?.mapNotNull { (name, claim) ->
         val claimName = DocumentMetaData.Claim.Name.SdJwtVc(name = name)
         claim.fromMsoDocToDocumentClaim(claimName)

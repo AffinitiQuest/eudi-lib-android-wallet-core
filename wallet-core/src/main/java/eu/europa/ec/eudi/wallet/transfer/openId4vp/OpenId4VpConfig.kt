@@ -214,6 +214,8 @@ sealed interface ClientIdScheme {
     data object X509SanDns : ClientIdScheme
 
     data object X509SanUri : ClientIdScheme
+
+    data object DID: ClientIdScheme
 }
 
 /**
@@ -246,6 +248,8 @@ sealed interface Format {
             val ES256 = SdJwtVc(listOf(Algorithm.ES256), listOf(Algorithm.ES256))
         }
     }
+
+    data object JwtVp : Format
 
     data object MsoMdoc : Format
 }

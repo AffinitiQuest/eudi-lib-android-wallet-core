@@ -18,3 +18,4 @@ package eu.europa.ec.eudi.wallet.transfer.openId4vp
 
 internal const val FORMAT_MSO_MDOC = "mso_mdoc"
 internal const val FORMAT_SD_JWT_VC = "vc+sd-jwt"
+internal const val FORMAT_W3C_JWT_VC = "jwt_vp"

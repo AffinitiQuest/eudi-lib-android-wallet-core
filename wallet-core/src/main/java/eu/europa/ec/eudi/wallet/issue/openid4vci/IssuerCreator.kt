@@ -27,7 +27,9 @@ import eu.europa.ec.eudi.openid4vci.ParUsage
 import eu.europa.ec.eudi.wallet.document.format.DocumentFormat
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
+import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
 import eu.europa.ec.eudi.wallet.issue.openid4vci.CredentialConfigurationFilter.Companion.DocTypeFilter
+import eu.europa.ec.eudi.wallet.issue.openid4vci.CredentialConfigurationFilter.Companion.DocTypesFilter
 import eu.europa.ec.eudi.wallet.issue.openid4vci.CredentialConfigurationFilter.Companion.VctFilter
 import io.ktor.client.HttpClient
 import java.net.URI
@@ -69,6 +71,7 @@ internal class IssuerCreator(
         val formatFilter = when (documentFormat) {
             is MsoMdocFormat -> DocTypeFilter(documentFormat.docType)
             is SdJwtVcFormat -> VctFilter(documentFormat.vct)
+            is W3CJwtFormat -> DocTypesFilter(documentFormat.types)
         }
 
         return CredentialIssuerId(config.issuerUrl)
