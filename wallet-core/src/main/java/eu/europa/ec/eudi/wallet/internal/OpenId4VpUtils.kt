@@ -177,7 +177,8 @@ internal class AQDidResolver: LookupPublicKeyByDIDUrl {
         }
 
         val keyId = didUrl.fragment
-        val didDocument = resolveDidDocument(components[2])
+        val removedDidMethod = components.drop(2)
+        val didDocument = resolveDidDocument(removedDidMethod.joinToString("/"))
         val verificationMethods = didDocument.get("verificationMethod")?.jsonArray
         verificationMethods?.let { methods ->
             for(method in methods) {
@@ -186,7 +187,11 @@ internal class AQDidResolver: LookupPublicKeyByDIDUrl {
                     if(vMethodKeyId == "#$keyId") {
                         val keyDictionary = vMethod.get("publicKeyJwk")?.jsonObject.toString()
                         val jwk = JWK.parse(keyDictionary)
-                        return (jwk as com.nimbusds.jose.jwk.ECKey).toECPublicKey()
+                        if(jwk is com.nimbusds.jose.jwk.ECKey) {
+                            return jwk.toECPublicKey()
+                        } else {
+                            return null
+                        }
                     }
                 }
             }
