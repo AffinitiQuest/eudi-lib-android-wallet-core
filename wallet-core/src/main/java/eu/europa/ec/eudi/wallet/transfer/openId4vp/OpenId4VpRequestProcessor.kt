@@ -83,13 +83,17 @@ class OpenId4VpRequestProcessor(
                 processedDeviceRequest = ProcessedDeviceRequest(
                     documentManager = documentManager,
                     requestedDocuments = requestedDocuments,
-                    sessionTranscript = sessionTranscriptBytes
+                    sessionTranscript = sessionTranscriptBytes,
+                    requestedDocTypes = emptyArray(),
+                    verifierName = "[verifier name]"
                 ),
-                msoMdocNonce = msoMdocNonce
+                msoMdocNonce = msoMdocNonce,
+                requestedDocTypes = presentationDefinition.inputDescriptors.map { it.id.value }.toTypedArray()
             )
         } else {
             val inputDescriptorMap: MutableMap<InputDescriptorId, List<DocumentId>> = mutableMapOf()
 
+            var requestedDocTypes = emptyArray<String>()
             val requestedDocuments = RequestedDocuments(
                 presentationDefinition.inputDescriptors
                     // NOTE: mso_mdoc and vc+sd-jwt are supported, other formats are ignored
@@ -107,6 +111,7 @@ class OpenId4VpRequestProcessor(
                                     .also { requestedDoc ->
                                         inputDescriptorMap[inputDescriptor.id] =
                                             requestedDoc.map { it.documentId }.toList()
+                                        requestedDocTypes = requestedDocTypes.plus(inputDescriptor.id.value)
                                     }
                             }
 
@@ -115,6 +120,7 @@ class OpenId4VpRequestProcessor(
                                     .also { requestedDoc ->
                                         inputDescriptorMap[inputDescriptor.id] =
                                             requestedDoc.map { it.documentId }.toList()
+                                        requestedDocTypes = requestedDocTypes.plus(inputDescriptor.id.value)
                                     }
                             }
 
@@ -123,6 +129,7 @@ class OpenId4VpRequestProcessor(
                                     .also { requestedDoc ->
                                         inputDescriptorMap[inputDescriptor.id] =
                                             requestedDoc.map { it.documentId }.toList()
+                                        requestedDocTypes = requestedDocTypes.plus(inputDescriptor.id.value)
                                     }
                             }
 
@@ -135,7 +142,8 @@ class OpenId4VpRequestProcessor(
                 resolvedRequestObject = request.resolvedRequestObject,
                 inputDescriptorMap = inputDescriptorMap,
                 requestedDocuments = requestedDocuments,
-                msoMdocNonce = msoMdocNonce
+                msoMdocNonce = msoMdocNonce,
+                requestedDocTypes = requestedDocTypes
             )
         }
     }
