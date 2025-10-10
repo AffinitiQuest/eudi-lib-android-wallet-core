@@ -85,6 +85,7 @@ class ProcessedGenericOpenId4VpRequest(
     private val inputDescriptorMap: Map<InputDescriptorId, List<DocumentId>>,
     requestedDocuments: RequestedDocuments,
     val msoMdocNonce: String,
+    val requestedDocTypes: Array<String>
 ) : RequestProcessor.ProcessedRequest.Success(requestedDocuments) {
 
     override fun generateResponse(
@@ -173,7 +174,9 @@ class ProcessedGenericOpenId4VpRequest(
         val deviceResponse = ProcessedDeviceRequest(
             documentManager = documentManager,
             sessionTranscript = sessionTranscript,
-            requestedDocuments = RequestedDocuments(requestedDocuments.filter { it.documentId == disclosedDocument.documentId })
+            requestedDocuments = RequestedDocuments(requestedDocuments.filter { it.documentId == disclosedDocument.documentId }),
+            requestedDocTypes = emptyArray(),
+            verifierName = "[verifier name]"
         ).generateResponse(
             disclosedDocuments = DisclosedDocuments(disclosedDocument),
             signatureAlgorithm = signatureAlgorithm

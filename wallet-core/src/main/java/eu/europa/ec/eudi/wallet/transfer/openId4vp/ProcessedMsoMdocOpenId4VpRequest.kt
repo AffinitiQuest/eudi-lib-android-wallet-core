@@ -22,11 +22,13 @@ import eu.europa.ec.eudi.iso18013.transfer.response.RequestProcessor
 import eu.europa.ec.eudi.iso18013.transfer.response.ResponseResult
 import eu.europa.ec.eudi.iso18013.transfer.response.device.DeviceResponse
 import eu.europa.ec.eudi.iso18013.transfer.response.device.ProcessedDeviceRequest
+import eu.europa.ec.eudi.openid4vp.Client
 import eu.europa.ec.eudi.openid4vp.Consensus
 import eu.europa.ec.eudi.openid4vp.PresentationQuery
 import eu.europa.ec.eudi.openid4vp.ResolvedRequestObject
 import eu.europa.ec.eudi.openid4vp.VerifiablePresentation
 import eu.europa.ec.eudi.openid4vp.VpContent
+import eu.europa.ec.eudi.openid4vp.legalName
 import eu.europa.ec.eudi.prex.DescriptorMap
 import eu.europa.ec.eudi.prex.Id
 import eu.europa.ec.eudi.prex.JsonPath
@@ -38,7 +40,30 @@ class ProcessedMsoMdocOpenId4VpRequest(
     private val processedDeviceRequest: ProcessedDeviceRequest,
     private val resolvedRequestObject: ResolvedRequestObject,
     val msoMdocNonce: String,
+    val requestedDocTypes: Array<String>
 ) : RequestProcessor.ProcessedRequest.Success(processedDeviceRequest.requestedDocuments) {
+
+    fun getCertName(): String {
+        val client = resolvedRequestObject.client
+        when(client) {
+            is Client.Attested -> return "[verifier-name]"
+            is Client.DIDClient -> return "[verifier-name]"
+            is Client.Preregistered -> return "[verifier-name]"
+            is Client.RedirectUri -> return "[verifier-name]"
+            is Client.X509SanDns -> {
+                val name = client.cert.subjectX500Principal?.name
+                val subjectPrincipal = name?.let { it } ?: ""
+                //val pattern = """(?:^|,\s?)(?:(?<name>[A-Z]+)=(?<val>"(?:[^"]|"")+"|[^,]+))+"""
+                val pattern = """(?:^|,\s?)(?:O=(?<val>"(?:[^"]|"")+"|[^,]+))"""
+                val regex = Regex(pattern)
+                val match = regex.find(subjectPrincipal)
+                val orgName = match?.let { it.groups["val"]?.value } ?: ""
+                return orgName
+            }
+            is Client.X509SanUri -> return "[verifier-name]"
+        }
+
+    }
 
     override fun generateResponse(
         disclosedDocuments: DisclosedDocuments,
