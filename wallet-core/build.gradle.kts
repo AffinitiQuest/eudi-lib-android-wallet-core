@@ -21,6 +21,8 @@ import com.github.jk1.license.filter.ReduceDuplicateLicensesFilter
 import com.github.jk1.license.render.InventoryMarkdownReportRenderer
 import com.vanniktech.maven.publish.AndroidMultiVariantLibrary
 import java.util.Locale
+import java.util.Properties
+import java.io.FileInputStream
 
 plugins {
     alias(libs.plugins.android.library)
@@ -235,6 +237,30 @@ tasks.assemble.configure {
 }
 
 // Publish
+
+publishing {
+    repositories {
+        maven {
+            name = "affinitiquest-dev"
+            url = uri("https://pkgs.dev.azure.com/affinitiquest/AffinitiQuest/_packaging/affinitiquest-dev/maven/v1")
+            credentials {
+                username = getPropertyFromFile("maven.username")
+                password = getPropertyFromFile("maven.password")
+            }
+        }
+    }
+}
+
+// Helper function to read from a properties file.
+fun getPropertyFromFile(key: String): String? {
+    val propertyFile = file("../maven.properties")
+    if(propertyFile.exists()) {
+        val properties = Properties()
+        propertyFile.inputStream().use { properties.load(it) }
+        return properties.getProperty(key)
+    }
+    return null
+}
 
 mavenPublishing {
     configure(

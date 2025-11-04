@@ -34,10 +34,29 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven {
+            name = "affinitiquest-dev"
+            url = uri("https://pkgs.dev.azure.com/affinitiquest/AffinitiQuest/_packaging/affinitiquest-dev/maven/v1")
+            credentials {
+                username = getPropertyFromFile("maven.username")
+                password = getPropertyFromFile("maven.password")
+            }
+        }
+        maven {
             url = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
             mavenContent { snapshotsOnly() }
         }
     }
+}
+
+// Helper function to read from a properties file.
+fun getPropertyFromFile(key: String): String? {
+    val propertyFile = file("maven.properties")
+    if(propertyFile.exists()) {
+        val properties = java.util.Properties()
+        propertyFile.inputStream().use { properties.load(it) }
+        return properties.getProperty(key)
+    }
+    return null
 }
 
 rootProject.name = "eudi-lib-android-wallet-core"
