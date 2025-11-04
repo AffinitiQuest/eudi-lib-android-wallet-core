@@ -9,10 +9,10 @@ dependencycheck = "9.0.9"
 dokka = "1.9.20"
 espresso-contrib = "3.6.1"
 espresso-core = "3.6.1"
-eudi-document-manager = "0.9.1-aq"
-eudi-iso18013-data-transfer = "0.6.2-aq"
-eudi-lib-jvm-openid4vci-kt = "0.6.1-aq"
-eudi-lib-jvm-siop-openid4vp-kt = "0.8.1-aq"
+eudi-document-manager = "0.9.1"
+eudi-iso18013-data-transfer = "0.6.2"
+eudi-lib-jvm-openid4vci-kt = "0.6.1"
+eudi-lib-jvm-siop-openid4vp-kt = "0.8.1"
 eudi-lib-jvm-sdjwt-kt = "0.10.0"
 eudi-lib-kmp-statium = "0.2.1"
 google-identity-android = "202408.1"
@@ -55,10 +55,10 @@ cose-java = { module = "com.augustcellars.cose:cose-java", version.ref = "coseJa
 espresso-contrib = { module = "androidx.test.espresso:espresso-contrib", version.ref = "espresso-contrib" }
 espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso-core" }
 espresso-intents = { module = "androidx.test.espresso:espresso-intents", version.ref = "espresso-core" }
-eudi-document-manager = { module = "eu.europa.ec.eudi:eudi-lib-android-wallet-document-manager", version.ref = "eudi-document-manager" }
-eudi-iso18013-data-transfer = { module = "eu.europa.ec.eudi:eudi-lib-android-iso18013-data-transfer", version.ref = "eudi-iso18013-data-transfer" }
-eudi-lib-jvm-openid4vci-kt = { module = "eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt", version.ref = "eudi-lib-jvm-openid4vci-kt" }
-eudi-lib-jvm-siop-openid4vp-kt = { module = "eu.europa.ec.eudi:eudi-lib-jvm-siop-openid4vp-kt", version.ref = "eudi-lib-jvm-siop-openid4vp-kt" }
+eudi-document-manager = { module = "eu.europa.ec.eudi.aq:eudi-lib-android-wallet-document-manager", version.ref = "eudi-document-manager" }
+eudi-iso18013-data-transfer = { module = "eu.europa.ec.eudi.aq:eudi-lib-android-iso18013-data-transfer", version.ref = "eudi-iso18013-data-transfer" }
+eudi-lib-jvm-openid4vci-kt = { module = "eu.europa.ec.eudi.aq:eudi-lib-jvm-openid4vci-kt", version.ref = "eudi-lib-jvm-openid4vci-kt" }
+eudi-lib-jvm-siop-openid4vp-kt = { module = "eu.europa.ec.eudi.aq:eudi-lib-jvm-siop-openid4vp-kt", version.ref = "eudi-lib-jvm-siop-openid4vp-kt" }
 eudi-lib-jvm-sdjwt-kt = { module = "eu.europa.ec.eudi:eudi-lib-jvm-sdjwt-kt", version.ref = "eudi-lib-jvm-sdjwt-kt" }
 eudi-lib-kmp-statium = { module = "eu.europa.ec.eudi:eudi-lib-kmp-statium-android", version.ref = "eudi-lib-kmp-statium" }
 google-identity-android = { module = "com.android.identity:identity-android", version.ref = "google-identity-android" }
