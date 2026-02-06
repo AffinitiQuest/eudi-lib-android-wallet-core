@@ -303,6 +303,8 @@ sealed interface ClientIdScheme {
      * that the verifier is authorized to use.
      */
     data object RedirectUri : ClientIdScheme
+
+    data object DID : ClientIdScheme
 }
 
 /**
@@ -440,6 +442,32 @@ sealed interface Format {
             val ES256 = MsoMdoc(
                 issuerAuthAlgorithms = listOf(Algorithm.ES256, Algorithm.ESP256),
                 deviceAuthAlgorithms = listOf(Algorithm.ES256, Algorithm.ESP256)
+            )
+        }
+    }
+
+    /**
+     * Mobile Security Object document format (ISO 18013-5 mDL).
+     *
+     * This format represents ISO 18013-5 mobile driving license documents and similar
+     * mobile security objects. It provides a standardized way to present identity
+     * credentials in mobile environments with strong cryptographic security.
+     */
+    data class JwtVc(
+        val algValues: List<Algorithm>,
+    ) : Format {
+
+        init {
+            for (algorithm in algValues) {
+                requireNotNull(algorithm.coseAlgorithmIdentifier) {
+                    "AlgValues $algorithm does not have a COSE algorithm identifier"
+                }
+            }
+        }
+
+        companion object {
+            val ES256 = JwtVc(
+                algValues = listOf(Algorithm.ES256, Algorithm.ESP256)
             )
         }
     }

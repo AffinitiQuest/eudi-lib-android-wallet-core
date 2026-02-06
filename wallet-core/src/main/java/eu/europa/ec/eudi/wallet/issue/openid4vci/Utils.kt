@@ -27,6 +27,7 @@ import eu.europa.ec.eudi.wallet.document.UnsignedDocument
 import eu.europa.ec.eudi.wallet.document.credential.IssuerProvidedCredential
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
+import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
 import eu.europa.ec.eudi.wallet.internal.d
 import eu.europa.ec.eudi.wallet.internal.e
 import eu.europa.ec.eudi.wallet.issue.openid4vci.OpenId4VciManager.Companion.TAG
@@ -112,6 +113,7 @@ internal fun DocumentManager.createDocument(
         when (documentFormat) {
             is MsoMdocFormat -> documentFormat.docType
             is SdJwtVcFormat -> documentFormat.vct
+            is W3CJwtFormat -> documentFormat.types.last()
         }
     }
 
@@ -178,6 +180,10 @@ internal fun DocumentManager.storeIssuedDocument(
 
             is SdJwtVcFormat -> credential.value.also {
                 log("SD-JWT-VC: $it")
+            }.toByteArray(charset = Charsets.US_ASCII)
+
+            is W3CJwtFormat -> credential.value.also {
+                log("JWT-VC: $it")
             }.toByteArray(charset = Charsets.US_ASCII)
         }
         IssuerProvidedCredential(

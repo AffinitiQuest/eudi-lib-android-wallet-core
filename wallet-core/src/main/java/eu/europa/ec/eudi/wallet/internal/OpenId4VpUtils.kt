@@ -27,6 +27,7 @@
 
 package eu.europa.ec.eudi.wallet.internal
 
+import com.nimbusds.jose.JOSEObjectType
 import com.nimbusds.jose.JWEAlgorithm
 import com.nimbusds.jose.JWSAlgorithm
 import com.nimbusds.jose.JWSHeader
@@ -35,6 +36,8 @@ import com.nimbusds.jose.jca.JCAContext
 import com.nimbusds.jose.jwk.AsymmetricJWK
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.util.Base64URL
+import com.nimbusds.jwt.JWTClaimsSet
+import com.nimbusds.jwt.SignedJWT
 import com.upokecenter.cbor.CBORObject
 import eu.europa.ec.eudi.iso18013.transfer.SessionTranscriptBytes
 import eu.europa.ec.eudi.iso18013.transfer.response.DisclosedDocument
@@ -43,8 +46,11 @@ import eu.europa.ec.eudi.iso18013.transfer.response.RequestedDocuments
 import eu.europa.ec.eudi.iso18013.transfer.response.device.DeviceResponse
 import eu.europa.ec.eudi.iso18013.transfer.response.device.ProcessedDeviceRequest
 import eu.europa.ec.eudi.openid4vp.CoseAlgorithm
+import eu.europa.ec.eudi.openid4vp.HashAlgorithm
 import eu.europa.ec.eudi.openid4vp.JarConfiguration
 import eu.europa.ec.eudi.openid4vp.JwkSetSource.ByReference
+import eu.europa.ec.eudi.openid4vp.Jwt
+import eu.europa.ec.eudi.openid4vp.LookupPublicKeyByDIDUrl
 import eu.europa.ec.eudi.openid4vp.OpenId4VPConfig
 import eu.europa.ec.eudi.openid4vp.PreregisteredClient
 import eu.europa.ec.eudi.openid4vp.ResolvedRequestObject
@@ -59,10 +65,13 @@ import eu.europa.ec.eudi.sdjwt.DefaultSdJwtOps.present
 import eu.europa.ec.eudi.sdjwt.DefaultSdJwtOps.serialize
 import eu.europa.ec.eudi.sdjwt.DefaultSdJwtOps.serializeWithKeyBinding
 import eu.europa.ec.eudi.sdjwt.JwtAndClaims
+import eu.europa.ec.eudi.sdjwt.JwtBase64
 import eu.europa.ec.eudi.sdjwt.NimbusSdJwtOps
 import eu.europa.ec.eudi.sdjwt.SdJwt
+import eu.europa.ec.eudi.sdjwt.SdJwtSpec
 import eu.europa.ec.eudi.sdjwt.vc.ClaimPath
 import eu.europa.ec.eudi.sdjwt.vc.ClaimPathElement
+import eu.europa.ec.eudi.sdjwt.vc.DefaultHttpClientFactory
 import eu.europa.ec.eudi.wallet.document.DocumentManager
 import eu.europa.ec.eudi.wallet.document.IssuedDocument
 import eu.europa.ec.eudi.wallet.document.credential.CredentialIssuedData
@@ -75,11 +84,25 @@ import eu.europa.ec.eudi.wallet.transfer.openId4vp.Format
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.OpenId4VpConfig
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.OpenId4VpReaderTrust
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.SdJwtVcItem
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.multipaz.credential.SecureAreaBoundCredential
 import org.multipaz.crypto.Algorithm
 import org.multipaz.securearea.KeyUnlockData
+import java.net.URI
+import java.net.URL
 import java.security.MessageDigest
+import java.security.PublicKey
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.Date
@@ -211,6 +234,7 @@ internal fun makeOpenId4VPConfig(
             ClientIdScheme.RedirectUri -> SupportedClientIdPrefix.RedirectUri
             ClientIdScheme.X509SanDns -> SupportedClientIdPrefix.X509SanDns(trust = trust)
             ClientIdScheme.X509Hash -> SupportedClientIdPrefix.X509Hash(trust = trust)
+            ClientIdScheme.DID -> SupportedClientIdPrefix.DecentralizedIdentifier(AQDidResolver())
         }
     }
     return OpenId4VPConfig(
@@ -279,9 +303,18 @@ internal fun List<Format>.toVpFormats(): VpFormatsSupported {
             )
         }
 
+    val jwtVcVpFormat = filterIsInstance<Format.JwtVc>()
+        .firstOrNull()
+        ?.let { spec: Format.JwtVc ->
+            VpFormatsSupported.JwtVc(
+                algValues = spec.algValues.map { it: Algorithm -> JWSAlgorithm.parse(it.name) }
+            )
+        }
+
     return VpFormatsSupported(
         sdJwtVc = sdJwtVcVpFormat,
-        msoMdoc = msoMdocVpFormat
+        msoMdoc = msoMdocVpFormat,
+        jwtVc = jwtVcVpFormat
     )
 }
 
@@ -411,6 +444,97 @@ internal suspend fun verifiablePresentationForSdJwtVc(
     }.getOrThrow()
 }
 
+internal fun verifiablePresentationForJwtVc(
+    resolvedRequestObject: ResolvedRequestObject,
+    document: IssuedDocument,
+    disclosedDocument: DisclosedDocument,
+    signatureAlgorithm: Algorithm,
+): VerifiablePresentation.JsonObj {
+    val idToken = getIdToken(document, disclosedDocument.keyUnlockData, resolvedRequestObject.client.id, resolvedRequestObject.nonce, signatureAlgorithm, Date())
+    var content =
+        JsonObject(
+            mapOf(
+                "@context" to JsonArray(listOf(JsonPrimitive("https://www.w3.org/2018/credentials/v1"))),
+                "type" to JsonArray(listOf(JsonPrimitive("VerifiablePresentation"))),
+                "vp" to JsonObject(mapOf("verifiableCredential" to JsonArray(listOf(JsonPrimitive(String(document.issuerProvidedData)))))),
+                "proof" to JsonObject(mapOf("type" to JsonPrimitive("ES256"), "proofPurpose" to JsonPrimitive("authentication"), "jws" to JsonPrimitive(idToken) ))
+            )
+        )
+    val o = JsonObject(emptyMap())
+    val jsonObject = JsonObject(content)
+    return VerifiablePresentation.JsonObj(jsonObject)
+}
+
+private fun getIdToken(
+    document: IssuedDocument,
+    keyUnlockData: KeyUnlockData?,
+    clientId: VerifierId,
+    nonce: String,
+    signatureAlgorithm: Algorithm,
+    issueDate: Date,
+): String {
+    return runBlocking {
+        val algorithm = JWSAlgorithm.parse((signatureAlgorithm).joseAlgorithmIdentifier)
+        val aqJwtIssuer = aqJwtIssuer(
+            signer = object : JWSSigner {
+                override fun getJCAContext(): JCAContext = JCAContext()
+                override fun supportedJWSAlgorithms(): Set<JWSAlgorithm> = setOf(algorithm)
+                override fun sign(header: JWSHeader, signingInput: ByteArray): Base64URL {
+                    val signature =
+                        document.sign(signingInput, keyUnlockData)
+                            .getOrThrow()
+                    return Base64URL.encode(signature.toJoseEncoded(algorithm))
+                }
+            },
+            signAlgorithm = algorithm,
+            publicKey = JWK.parseFromPEMEncodedObjects(document.keyInfo.publicKey.toPem()) as AsymmetricJWK
+        ) {
+            audience(clientId.clientId)
+            claim("nonce", nonce)
+            issueTime(issueDate)
+        }
+        val digestAlgorithm = MessageDigest.getInstance(HashAlgorithm.SHA_256.name.uppercase())
+        val digest = digestAlgorithm.digest(String(document.issuerProvidedData).encodeToByteArray())
+        val digestString = JwtBase64.encode(digest)
+        aqJwtIssuer.invoke(digestString).getOrThrow()
+    }
+}
+
+fun interface BuildAqJwt {
+    suspend operator fun invoke(digest: String): Result<Jwt>
+}
+
+
+
+fun aqJwtIssuer(
+    signer: JWSSigner,
+    signAlgorithm: JWSAlgorithm,
+    publicKey: AsymmetricJWK,
+    claimSetBuilderAction: JWTClaimsSet.Builder.() -> Unit = {},
+): BuildAqJwt = BuildAqJwt { digest ->
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val header = JWSHeader.Builder(signAlgorithm).apply {
+                type(JOSEObjectType(SdJwtSpec.MEDIA_SUBTYPE_KB_JWT))
+                val pk = publicKey
+                if (pk is JWK) {
+                    val jsonEncodedString = pk.toJSONString()
+                    val byteArray = jsonEncodedString.encodeToByteArray()
+                    val encodedString = Base64URL.encode(byteArray)
+                    keyID("did:jwk:$encodedString#0")
+                }
+            }.build()
+
+            val claimSet = JWTClaimsSet.Builder().apply {
+                claimSetBuilderAction()
+                claim(SdJwtSpec.CLAIM_SD_HASH, digest)
+            }.build()
+
+            SignedJWT(header, claimSet).apply { sign(signer) }.serialize()
+        }
+    }
+}
+
 /**
  * Constructs a verifiable presentation for an MSO mdoc credential.
  *
@@ -455,4 +579,58 @@ internal fun verifiablePresentationForMsoMdoc(
             .withoutPadding()
             .encodeToString(deviceResponse.deviceResponseBytes)
     )
+}
+
+internal class AQDidResolver: LookupPublicKeyByDIDUrl {
+    suspend fun resolveDidDocument(didUrl: String): JsonObject {
+        val didUrlHost = didUrl.split("#")
+        var urlString = "https://" + didUrlHost[0]
+        val url = URL("https://" + didUrlHost[0])
+        if(didUrl.last() == ':') {
+            urlString += "did.json"
+        } else if(url.path.length <= 1) {
+            urlString += "/.well-known/did.json"
+        } else {
+            urlString += "/did.json"
+        }
+
+        val finalUrl = URL(urlString)
+        DefaultHttpClientFactory().use { httpClient ->
+            val response = httpClient.get(finalUrl)
+            val string = response.bodyAsText()
+            val json = Json.decodeFromString<JsonObject>(string)
+            return json
+        }
+    }
+
+    override suspend fun resolveKey(didUrl: URI): PublicKey? {
+        val didString = didUrl.toString()
+        val components = didString.split(':')
+        if(components.size < 3) {
+            return null
+        }
+
+        val keyId = didUrl.fragment
+        val removedDidMethod = components.drop(2)
+        val didDocument = resolveDidDocument(removedDidMethod.joinToString("/"))
+        val verificationMethods = didDocument.get("verificationMethod")?.jsonArray
+        verificationMethods?.let { methods ->
+            for(method in methods) {
+                method.jsonObject?.let { vMethod ->
+                    val vMethodKeyId = vMethod.get("id")?.jsonPrimitive?.content
+                    if(vMethodKeyId == "#$keyId") {
+                        val keyDictionary = vMethod.get("publicKeyJwk")?.jsonObject.toString()
+                        val jwk = JWK.parse(keyDictionary)
+                        if(jwk is com.nimbusds.jose.jwk.ECKey) {
+                            return jwk.toECPublicKey()
+                        } else {
+                            return null
+                        }
+                    }
+                }
+            }
+        }
+
+        return null
+    }
 }

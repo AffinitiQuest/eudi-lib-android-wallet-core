@@ -25,7 +25,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
-    id("kotlin-parcelize")
+    alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.dokka)
     alias(libs.plugins.dependency.license.report)
     alias(libs.plugins.dependencycheck)
@@ -106,6 +106,10 @@ android {
             "-opt-in=kotlin.RequiresOptIn",
             "-opt-in=kotlin.time.ExperimentalTime",
         )
+    }
+
+    signing {
+        isRequired = false
     }
 }
 

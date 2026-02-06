@@ -20,6 +20,7 @@ import eu.europa.ec.eudi.statium.StatusReference
 import eu.europa.ec.eudi.wallet.document.IssuedDocument
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
+import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
 
 /**
  * Interface for extracting revocation status data from documents
@@ -55,6 +56,7 @@ object DefaultStatusReferenceExtractor : StatusReferenceExtractor {
         return when (document.format) {
             is MsoMdocFormat -> MsoMdocStatusReferenceExtractor
             is SdJwtVcFormat -> SdJwtStatusReferenceExtractor
+            is W3CJwtFormat -> SdJwtStatusReferenceExtractor
         }.extractStatusReference(document)
     }
 

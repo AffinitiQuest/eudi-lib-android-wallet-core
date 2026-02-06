@@ -26,6 +26,7 @@ import eu.europa.ec.eudi.iso18013.transfer.response.RequestedDocuments
 import eu.europa.ec.eudi.iso18013.transfer.response.device.MsoMdocItem
 import eu.europa.ec.eudi.openid4vp.Format
 import eu.europa.ec.eudi.openid4vp.dcql.CredentialQuery
+import eu.europa.ec.eudi.openid4vp.dcql.metaJwtVc
 import eu.europa.ec.eudi.openid4vp.dcql.metaMsoMdoc
 import eu.europa.ec.eudi.openid4vp.dcql.metaSdJwtVc
 import eu.europa.ec.eudi.openid4vp.legalName
@@ -36,6 +37,7 @@ import eu.europa.ec.eudi.wallet.document.format.MsoMdocClaim
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcClaim
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
+import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
 import eu.europa.ec.eudi.wallet.internal.generateMdocGeneratedNonce
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.OpenId4VpReaderTrust
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.OpenId4VpReaderTrustImpl
@@ -156,6 +158,21 @@ class DcqlRequestProcessor(
                             )
                         }
 
+                        Format.W3CJwtVcJson -> {
+                            // Handle JWT VC format credentials
+                            val typeValues = query.metaJwtVc!!.typeValues
+                            require(typeValues.isNotEmpty()) {
+                                "VctValues are missing or is empty for query with id ${query.id}"
+                            }
+                            val requestedDocuments =
+                                getJwtVcRequestedDocuments(query, typeValues, readerAuth)
+
+                            query.id to RequestedDocumentsByFormat(
+                                format = format.value,
+                                requestedDocuments = requestedDocuments
+                            )
+                        }
+
                         else -> throw IllegalArgumentException("Not supported format ${format.value}")
                     }
                 }
@@ -224,6 +241,54 @@ class DcqlRequestProcessor(
         val documents = runBlocking {
             vctValues.flatMap {
                 findDocumentsByFormat(SdJwtVcFormat(it))
+            }
+        }
+
+        val requestedDocuments = RequestedDocuments(documents.map { document ->
+            RequestedDocument(
+                documentId = document.id,
+                // If no claims are specified, use all available claims in the document
+                requestedItems = requestedItems ?: (getAllClaimPathsFrom(
+                    claims = document.data.claims.filterIsInstance<SdJwtVcClaim>(),
+                    rootPath = emptyList()
+                ).associate { path -> SdJwtVcItem(path) to false }),
+                readerAuth = readerAuth
+            )
+        })
+        return requestedDocuments
+    }
+
+    /**
+     * Processes WT VC format credential requests and finds matching documents.
+     *
+     * This method takes a DCQL credential query containing SD-JWT VC format requirements and:
+     * 1. Extracts requested claims and their retention flags from the query
+     * 2. Finds all wallet documents matching any of the provided VCT (Verifiable Credential Type) values
+     * 3. For each matching document, maps either the specific requested claims or all available claims
+     *    if none were explicitly requested
+     *
+     * When no claims are specified in the query, the method automatically includes all available
+     * claims from the matched documents by traversing their claim hierarchy.
+     *
+     * @param query The credential query containing SD-JWT VC format requirements and requested claims
+     * @param typeValues List of Verifiable Credential Type values to match against wallet documents
+     * @param readerAuth Optional reader authentication information to include with the documents
+     * @return [RequestedDocuments] collection containing all matching documents with their claims
+     */
+    private fun getJwtVcRequestedDocuments(
+        query: CredentialQuery,
+        typeValues: List<List<String>>,
+        readerAuth: ReaderAuth?,
+    ): RequestedDocuments {
+        // Map requested claims to SdJwtVcItems
+        val requestedItems = query.claims?.associate { claim ->
+            SdJwtVcItem(path = claim.path.value.map { it.toString() }) to (claim.intentToRetain == true)
+        }
+
+        // Find all documents that match any of the requested vctValues
+        val documents = runBlocking {
+            typeValues.flatMap {
+                findDocumentsByFormat(W3CJwtFormat(it))
             }
         }
 

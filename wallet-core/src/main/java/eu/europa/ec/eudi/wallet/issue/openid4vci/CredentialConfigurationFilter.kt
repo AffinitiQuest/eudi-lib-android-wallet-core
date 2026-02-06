@@ -19,6 +19,7 @@ package eu.europa.ec.eudi.wallet.issue.openid4vci
 import eu.europa.ec.eudi.openid4vci.CredentialConfiguration
 import eu.europa.ec.eudi.openid4vci.MsoMdocCredential
 import eu.europa.ec.eudi.openid4vci.SdJwtVcCredential
+import eu.europa.ec.eudi.openid4vci.W3CSignedJwtCredential
 import eu.europa.ec.eudi.wallet.issue.openid4vci.CredentialConfigurationFilter.Companion.MsoMdocFormatFilter
 import kotlin.reflect.KClass
 
@@ -77,6 +78,19 @@ internal fun interface CredentialConfigurationFilter {
             CredentialConfigurationFilter { conf ->
                 when (conf) {
                     is SdJwtVcCredential -> conf.type == vct
+                    else -> false
+                }
+            }
+        /**
+         * Filter for [CredentialConfiguration] instances based on the vct.
+         * @param vct vct
+         * @return [CredentialConfigurationFilter] instance
+         */
+        @JvmSynthetic
+        internal fun TypeFilter(types: List<String>): CredentialConfigurationFilter =
+            CredentialConfigurationFilter { conf ->
+                when (conf) {
+                    is W3CSignedJwtCredential -> conf.credentialDefinition.type == types
                     else -> false
                 }
             }
