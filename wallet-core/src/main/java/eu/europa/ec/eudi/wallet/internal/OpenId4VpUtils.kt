@@ -34,6 +34,7 @@ import com.nimbusds.jose.JWSHeader
 import com.nimbusds.jose.JWSSigner
 import com.nimbusds.jose.jca.JCAContext
 import com.nimbusds.jose.jwk.AsymmetricJWK
+import com.nimbusds.jose.jwk.ECKey
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.util.Base64URL
 import com.nimbusds.jwt.JWTClaimsSet
@@ -565,7 +566,9 @@ internal fun verifiablePresentationForMsoMdoc(
     val deviceResponse = ProcessedDeviceRequest(
         documentManager = documentManager,
         sessionTranscript = sessionTranscript,  // Bind the presentation to this specific session
-        requestedDocuments = RequestedDocuments(requestedDocuments.filter { it.documentId == disclosedDocument.documentId })
+        requestedDocuments = RequestedDocuments(requestedDocuments.filter { it.documentId == disclosedDocument.documentId }),
+        requestedDocTypes = emptyArray(),
+        verifierName = "[verifier name]"
     ).generateResponse(
         // Create a response containing only the selected document with its disclosed claims
         disclosedDocuments = DisclosedDocuments(disclosedDocument),
@@ -621,7 +624,7 @@ internal class AQDidResolver: LookupPublicKeyByDIDUrl {
                     if(vMethodKeyId == "#$keyId") {
                         val keyDictionary = vMethod.get("publicKeyJwk")?.jsonObject.toString()
                         val jwk = JWK.parse(keyDictionary)
-                        if(jwk is com.nimbusds.jose.jwk.ECKey) {
+                        if(jwk is ECKey) {
                             return jwk.toECPublicKey()
                         } else {
                             return null
