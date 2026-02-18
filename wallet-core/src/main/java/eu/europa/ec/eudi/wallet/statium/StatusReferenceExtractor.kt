@@ -56,7 +56,7 @@ object DefaultStatusReferenceExtractor : StatusReferenceExtractor {
         return when (document.format) {
             is MsoMdocFormat -> MsoMdocStatusReferenceExtractor
             is SdJwtVcFormat -> SdJwtStatusReferenceExtractor
-            is W3CJwtFormat -> SdJwtStatusReferenceExtractor
+            is W3CJwtFormat -> JwtStatusReferenceExtractor
         }.extractStatusReference(document)
     }
 

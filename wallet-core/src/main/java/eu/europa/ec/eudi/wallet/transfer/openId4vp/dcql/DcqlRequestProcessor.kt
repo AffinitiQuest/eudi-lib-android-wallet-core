@@ -288,7 +288,7 @@ class DcqlRequestProcessor(
         // Find all documents that match any of the requested vctValues
         val documents = runBlocking {
             typeValues.flatMap {
-                findDocumentsByFormat(W3CJwtFormat(it))
+                findDocumentsByFormat(W3CJwtFormat(listOf(it.first())))
             }
         }
 
