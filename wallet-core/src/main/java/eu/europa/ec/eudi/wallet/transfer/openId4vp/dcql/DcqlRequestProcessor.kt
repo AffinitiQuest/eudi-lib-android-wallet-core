@@ -259,11 +259,11 @@ class DcqlRequestProcessor(
     }
 
     /**
-     * Processes WT VC format credential requests and finds matching documents.
+     * Processes JWT VC format credential requests and finds matching documents.
      *
      * This method takes a DCQL credential query containing SD-JWT VC format requirements and:
      * 1. Extracts requested claims and their retention flags from the query
-     * 2. Finds all wallet documents matching any of the provided VCT (Verifiable Credential Type) values
+     * 2. Finds all wallet documents matching any of the provided Types values
      * 3. For each matching document, maps either the specific requested claims or all available claims
      *    if none were explicitly requested
      *
