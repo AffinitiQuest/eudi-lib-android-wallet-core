@@ -18,8 +18,10 @@
 
 package eu.europa.ec.eudi.wallet.transfer.openId4vp
 
+import eu.europa.ec.eudi.openid4vci.ProofType
 import org.multipaz.crypto.Algorithm
 import java.net.URI
+import java.sql.Types
 
 /**
  * Configuration for OpenID4VP (OpenID for Verifiable Presentations) transfer operations.
@@ -469,6 +471,16 @@ sealed interface Format {
             val ES256 = JwtVc(
                 algValues = listOf(Algorithm.ES256, Algorithm.ESP256)
             )
+        }
+    }
+
+    data class LdpVc(
+        val proofTypes: List<ProofType>,
+    ) : Format {
+
+        init {}
+        companion object {
+            val JWT = LdpVc ( proofTypes = listOf(ProofType.JWT))
         }
     }
 }

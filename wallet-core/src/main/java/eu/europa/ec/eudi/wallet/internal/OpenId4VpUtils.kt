@@ -37,7 +37,9 @@ import com.nimbusds.jose.jwk.AsymmetricJWK
 import com.nimbusds.jose.jwk.ECKey
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.util.Base64URL
+import com.nimbusds.jwt.JWT
 import com.nimbusds.jwt.JWTClaimsSet
+import com.nimbusds.jwt.JWTParser
 import com.nimbusds.jwt.SignedJWT
 import com.upokecenter.cbor.CBORObject
 import eu.europa.ec.eudi.iso18013.transfer.SessionTranscriptBytes
@@ -62,6 +64,7 @@ import eu.europa.ec.eudi.openid4vp.VPConfiguration
 import eu.europa.ec.eudi.openid4vp.VerifiablePresentation
 import eu.europa.ec.eudi.openid4vp.VerifierId
 import eu.europa.ec.eudi.openid4vp.VpFormatsSupported
+import eu.europa.ec.eudi.openid4vp.VpFormatsSupported.LdpVc
 import eu.europa.ec.eudi.sdjwt.DefaultSdJwtOps.present
 import eu.europa.ec.eudi.sdjwt.DefaultSdJwtOps.serialize
 import eu.europa.ec.eudi.sdjwt.DefaultSdJwtOps.serializeWithKeyBinding
@@ -312,10 +315,20 @@ internal fun List<Format>.toVpFormats(): VpFormatsSupported {
             )
         }
 
+    val ldpVcVpFormat = filterIsInstance<Format.LdpVc>()
+        .firstOrNull()
+        ?.let { spec: Format.LdpVc ->
+            LdpVc(
+                proofTypes = listOf("jwt")
+            )
+        }
+
+
     return VpFormatsSupported(
         sdJwtVc = sdJwtVcVpFormat,
         msoMdoc = msoMdocVpFormat,
-        jwtVc = jwtVcVpFormat
+        jwtVc = jwtVcVpFormat,
+        ldpVc = ldpVcVpFormat
     )
 }
 
@@ -464,6 +477,73 @@ internal fun verifiablePresentationForJwtVc(
     val o = JsonObject(emptyMap())
     val jsonObject = JsonObject(content)
     return VerifiablePresentation.JsonObj(jsonObject)
+}
+
+/**
+ * Constructs a verifiable presentation for an LDP VC (W3C JSON-LD Data Integrity) credential.
+ *
+ * Supports both VCDM 1.1 and VCDM 2.0 contexts by detecting the `@context` from the credential.
+ *
+ * @param resolvedRequestObject The resolved OpenID4VP authorization request.
+ * @param document The issued document containing the credential.
+ * @param disclosedDocument The document with disclosed claims.
+ * @param signatureAlgorithm The algorithm to use for signing.
+ * @return The constructed [VerifiablePresentation.JsonObj].
+ */
+internal fun verifiablePresentationForLdpVc(
+    resolvedRequestObject: ResolvedRequestObject,
+    document: IssuedDocument,
+    disclosedDocument: DisclosedDocument,
+    signatureAlgorithm: Algorithm,
+): VerifiablePresentation.JsonObj {
+    val idToken = getIdToken(
+        document,
+        disclosedDocument.keyUnlockData,
+        resolvedRequestObject.client.id,
+        resolvedRequestObject.nonce,
+        signatureAlgorithm,
+        Date()
+    )
+
+    val credentialString = String(document.issuerProvidedData)
+    val credentialJson = Json.parseToJsonElement(credentialString).jsonObject
+
+    // Detect VCDM version from the credential's @context
+    val credentialContext = credentialJson["@context"]?.jsonArray
+    val vcdm2Context = "https://www.w3.org/ns/credentials/v2"
+    val vcdm1Context = "https://www.w3.org/2018/credentials/v1"
+    val vpContext = if (credentialContext?.any {
+            it.jsonPrimitive.content == vcdm2Context
+        } == true) {
+        vcdm2Context
+    } else {
+        vcdm1Context
+    }
+
+    // Map signature algorithm to cryptosuite name
+    val cryptosuite = when (signatureAlgorithm) {
+        Algorithm.ES256, Algorithm.ESP256 -> "ecdsa-rdfc-2019"
+        Algorithm.ES384, Algorithm.ESP384 -> "ecdsa-rdfc-2019"
+        Algorithm.ED25519, Algorithm.EDDSA -> "eddsa-rdfc-2022"
+        else -> "ecdsa-rdfc-2019"
+    }
+
+    val content = JsonObject(
+        mapOf(
+            "@context" to JsonArray(listOf(JsonPrimitive(vpContext))),
+            "type" to JsonArray(listOf(JsonPrimitive("VerifiablePresentation"))),
+            "verifiableCredential" to JsonArray(listOf(credentialJson)),
+            "proof" to JsonObject(
+                mapOf(
+                    "type" to JsonPrimitive("DataIntegrityProof"),
+                    "cryptosuite" to JsonPrimitive(cryptosuite),
+                    "proofPurpose" to JsonPrimitive("authentication"),
+                    "jws" to JsonPrimitive(idToken)
+                )
+            )
+        )
+    )
+    return VerifiablePresentation.JsonObj(content)
 }
 
 private fun getIdToken(

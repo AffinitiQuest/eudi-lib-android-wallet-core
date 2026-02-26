@@ -24,8 +24,10 @@ import eu.europa.ec.eudi.openid4vci.CredentialOffer
 import eu.europa.ec.eudi.openid4vci.MsoMdocCredential
 import eu.europa.ec.eudi.openid4vci.SdJwtVcCredential
 import eu.europa.ec.eudi.openid4vci.TxCode
+import eu.europa.ec.eudi.openid4vci.W3CJsonLdDataIntegrityCredential
 import eu.europa.ec.eudi.openid4vci.W3CSignedJwtCredential
 import eu.europa.ec.eudi.wallet.document.format.DocumentFormat
+import eu.europa.ec.eudi.wallet.document.format.LdpVcFormat
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
 import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
@@ -75,6 +77,7 @@ data class Offer(
                 is MsoMdocCredential -> MsoMdocFormat(docType = configuration.docType)
                 is SdJwtVcCredential -> SdJwtVcFormat(vct = configuration.type)
                 is W3CSignedJwtCredential -> W3CJwtFormat(types = configuration.credentialDefinition.type)
+                is W3CJsonLdDataIntegrityCredential -> LdpVcFormat(types = configuration.credentialDefinition.type)
                 else -> null
             }
 
