@@ -25,6 +25,7 @@ import eu.europa.ec.eudi.wallet.document.DocumentManager
 import eu.europa.ec.eudi.wallet.document.IssuedDocument
 import eu.europa.ec.eudi.wallet.document.UnsignedDocument
 import eu.europa.ec.eudi.wallet.document.credential.IssuerProvidedCredential
+import eu.europa.ec.eudi.wallet.document.format.LdpVcFormat
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
 import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
@@ -114,6 +115,7 @@ internal fun DocumentManager.createDocument(
             is MsoMdocFormat -> documentFormat.docType
             is SdJwtVcFormat -> documentFormat.vct
             is W3CJwtFormat -> documentFormat.types.last()
+            is LdpVcFormat -> documentFormat.types.last()
         }
     }
 
@@ -170,21 +172,40 @@ internal fun DocumentManager.storeIssuedDocument(
     log: (message: String) -> Unit,
 ): Result<IssuedDocument> = runCatching {
 
-    val issuerProvidedData = credentials.map { (credential, keyAlias) ->
-        require(credential is Credential.Str) { "Credential must be a string" }
+val issuerProvidedData = credentials.map { (credential, keyAlias) ->
         val issuerData = when (document.format) {
-            is MsoMdocFormat -> Base64.getUrlDecoder().decode(credential.value)
-                .also {
-                    log("CBOR bytes: ${Hex.toHexString(it)}")
+            is MsoMdocFormat -> {
+                require(credential is Credential.Str) { "Credential must be a string" }
+                Base64.getUrlDecoder().decode(credential.value)
+                    .also {
+                        log("CBOR bytes: ${Hex.toHexString(it)}")
+                    }
+            }
+
+            is SdJwtVcFormat -> {
+                require(credential is Credential.Str) { "Credential must be a string" }
+                credential.value.also {
+                    log("SD-JWT-VC: $it")
+                }.toByteArray(charset = Charsets.US_ASCII)
+            }
+
+            is W3CJwtFormat -> {
+                require(credential is Credential.Str) { "Credential must be a string" }
+                credential.value.also {
+                    log("JWT-VC: $it")
+                }.toByteArray(charset = Charsets.US_ASCII)
+            }
+
+            is LdpVcFormat -> {
+                // LDP VC credentials may arrive as either a JSON object or a string
+                val credentialString = when (credential) {
+                    is Credential.Json -> credential.value.toString()
+                    is Credential.Str -> credential.value
                 }
-
-            is SdJwtVcFormat -> credential.value.also {
-                log("SD-JWT-VC: $it")
-            }.toByteArray(charset = Charsets.US_ASCII)
-
-            is W3CJwtFormat -> credential.value.also {
-                log("JWT-VC: $it")
-            }.toByteArray(charset = Charsets.US_ASCII)
+                credentialString.also {
+                    log("LDP-VC: $it")
+                }.toByteArray(charset = Charsets.US_ASCII)
+            }
         }
         IssuerProvidedCredential(
             publicKeyAlias = keyAlias,

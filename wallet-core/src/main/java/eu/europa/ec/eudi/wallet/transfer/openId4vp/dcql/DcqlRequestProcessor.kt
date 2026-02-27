@@ -26,6 +26,7 @@ import eu.europa.ec.eudi.iso18013.transfer.response.RequestedDocuments
 import eu.europa.ec.eudi.iso18013.transfer.response.device.MsoMdocItem
 import eu.europa.ec.eudi.openid4vp.Format
 import eu.europa.ec.eudi.openid4vp.dcql.CredentialQuery
+import eu.europa.ec.eudi.openid4vci.FORMAT_W3C_JSONLD_DATA_INTEGRITY
 import eu.europa.ec.eudi.openid4vp.dcql.metaJwtVc
 import eu.europa.ec.eudi.openid4vp.dcql.metaMsoMdoc
 import eu.europa.ec.eudi.openid4vp.dcql.metaSdJwtVc
@@ -33,6 +34,8 @@ import eu.europa.ec.eudi.openid4vp.legalName
 import eu.europa.ec.eudi.wallet.document.DocumentManager
 import eu.europa.ec.eudi.wallet.document.IssuedDocument
 import eu.europa.ec.eudi.wallet.document.format.DocumentFormat
+import eu.europa.ec.eudi.wallet.document.format.LdpVcClaim
+import eu.europa.ec.eudi.wallet.document.format.LdpVcFormat
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocClaim
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcClaim
@@ -45,6 +48,8 @@ import eu.europa.ec.eudi.wallet.transfer.openId4vp.OpenId4VpRequest
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.ReaderTrustResult
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.SdJwtVcItem
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Processes OpenID4VP requests using DCQL (Digital Credentials Query Language).
@@ -173,7 +178,31 @@ class DcqlRequestProcessor(
                             )
                         }
 
-                        else -> throw IllegalArgumentException("Not supported format ${format.value}")
+                        else -> {
+                            if (format.value == FORMAT_W3C_JSONLD_DATA_INTEGRITY) {
+                                // Handle LDP VC (W3C JSON-LD Data Integrity) format credentials
+                                // Manually parse meta to extract type_values since no dedicated
+                                // meta extension exists in the OpenID4VP library
+                                val typeValues = query.meta?.get("type_values")
+                                    ?.jsonArray
+                                    ?.map { typeArray ->
+                                        typeArray.jsonArray.map { it.jsonPrimitive.content }
+                                    }
+                                    ?: emptyList()
+                                require(typeValues.isNotEmpty()) {
+                                    "type_values are missing or empty for query with id ${query.id}"
+                                }
+                                val requestedDocuments =
+                                    getLdpVcRequestedDocuments(query, typeValues, readerAuth)
+
+                                query.id to RequestedDocumentsByFormat(
+                                    format = format.value,
+                                    requestedDocuments = requestedDocuments
+                                )
+                            } else {
+                                throw IllegalArgumentException("Not supported format ${format.value}")
+                            }
+                        }
                     }
                 }
 
@@ -300,6 +329,50 @@ class DcqlRequestProcessor(
                     claims = document.data.claims.filterIsInstance<SdJwtVcClaim>(),
                     rootPath = emptyList()
                 ).associate { path -> SdJwtVcItem(path) to false }),
+                readerAuth = readerAuth
+            )
+        })
+        return requestedDocuments
+    }
+
+    /**
+     * Processes LDP VC (W3C JSON-LD Data Integrity) format credential requests and finds matching documents.
+     *
+     * This method takes a DCQL credential query containing LDP VC format requirements and:
+     * 1. Extracts requested claims and their retention flags from the query
+     * 2. Finds all wallet documents matching any of the provided type values
+     * 3. For each matching document, maps either the specific requested claims or all available claims
+     *    if none were explicitly requested
+     *
+     * @param query The credential query containing LDP VC format requirements and requested claims
+     * @param typeValues List of credential type arrays to match against wallet documents
+     * @param readerAuth Optional reader authentication information to include with the documents
+     * @return [RequestedDocuments] collection containing all matching documents with their claims
+     */
+    private fun getLdpVcRequestedDocuments(
+        query: CredentialQuery,
+        typeValues: List<List<String>>,
+        readerAuth: ReaderAuth?,
+    ): RequestedDocuments {
+        // Map requested claims to SdJwtVcItems
+        val requestedItems = query.claims?.associate { claim ->
+            SdJwtVcItem(path = claim.path.value.map { it.toString() }) to (claim.intentToRetain == true)
+        }
+
+        // Find all documents that match any of the requested type values
+        val documents = runBlocking {
+            typeValues.flatMap {
+                findDocumentsByFormat(LdpVcFormat(it))
+            }
+        }
+
+        val requestedDocuments = RequestedDocuments(documents.map { document ->
+            RequestedDocument(
+                documentId = document.id,
+                // If no claims are specified, use all available claims in the document
+                requestedItems = requestedItems ?: document.data.claims
+                    .filterIsInstance<LdpVcClaim>()
+                    .associate { claim -> SdJwtVcItem(listOf(claim.identifier)) to false },
                 readerAuth = readerAuth
             )
         })

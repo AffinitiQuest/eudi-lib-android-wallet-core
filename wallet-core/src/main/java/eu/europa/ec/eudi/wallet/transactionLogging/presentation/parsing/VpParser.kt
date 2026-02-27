@@ -23,6 +23,9 @@ import eu.europa.ec.eudi.sdjwt.DefaultSdJwtOps.recreateClaimsAndDisclosuresPerCl
 import eu.europa.ec.eudi.sdjwt.JwtAndClaims
 import eu.europa.ec.eudi.sdjwt.SdJwt
 import eu.europa.ec.eudi.sdjwt.vc.SelectPath.Default.select
+import eu.europa.ec.eudi.openid4vci.FORMAT_W3C_JSONLD_DATA_INTEGRITY
+import eu.europa.ec.eudi.openid4vci.FORMAT_W3C_SIGNED_JWT
+import eu.europa.ec.eudi.wallet.document.format.LdpVcFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
 import eu.europa.ec.eudi.wallet.document.metadata.IssuerMetadata
 import eu.europa.ec.eudi.wallet.transactionLogging.TransactionLog
@@ -32,7 +35,11 @@ import eu.europa.ec.eudi.wallet.transactionLogging.presentation.VPTokenConsensus
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.FORMAT_MSO_MDOC
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.FORMAT_SD_JWT_VC
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.Base64
 
@@ -63,19 +70,21 @@ fun parseVp(
                 .filter { md -> md.queryId == queryId }
                 .sortedBy { it.index }
 
-            // Support only VerifiablePresentation.Generic for now
-            vps.filterIsInstance<VerifiablePresentation.Generic>()
-                .mapIndexedNotNull { index, vp ->
-                    // metadata for queryId and current index of document
-                    queryMetadata.getOrNull(index)
-                        ?.let { vpMetadata ->
-                            when (vpMetadata.format) {
-                                FORMAT_MSO_MDOC -> parseMsoMdocFromVp(vp, vpMetadata)
-                                FORMAT_SD_JWT_VC -> parseVcSdJwt(vp, vpMetadata)
-                                else -> null
-                            }
+            vps.mapIndexedNotNull { index, vp ->
+                // metadata for queryId and current index of document
+                queryMetadata.getOrNull(index)
+                    ?.let { vpMetadata ->
+                        when (vpMetadata.format) {
+                            FORMAT_MSO_MDOC -> (vp as? VerifiablePresentation.Generic)
+                                ?.let { parseMsoMdocFromVp(it, vpMetadata) }
+                            FORMAT_SD_JWT_VC -> (vp as? VerifiablePresentation.Generic)
+                                ?.let { parseVcSdJwt(it, vpMetadata) }
+                            FORMAT_W3C_JSONLD_DATA_INTEGRITY -> parseLdpVcFromVp(vp, vpMetadata)
+                            FORMAT_W3C_SIGNED_JWT -> parseLdpVcFromVp(vp, vpMetadata)
+                            else -> null
                         }
-                }
+                    }
+            }
 
         }
     return presentedDocuments
@@ -235,6 +244,80 @@ fun getPresentedDocumentsFromClaims(
  * @return the claim metadata as a [IssuerMetadata.Claim] object
  */
 fun findClaimMetadataForSdJwtVc(
+    path: List<String>,
+    metadata: IssuerMetadata?,
+): IssuerMetadata.Claim? {
+    return metadata?.claims?.find {
+        it.path.size == path.size && it.path.zip(path).all { (a, b) -> a == b }
+    }
+}
+
+/**
+ * Parses an LDP VC (W3C JSON-LD Data Integrity) document from a Verifiable Presentation.
+ *
+ * This function extracts the credential from the VP JSON structure, parses the
+ * `credentialSubject` claims, and constructs a [PresentedDocument] with [LdpVcFormat].
+ *
+ * @param vp The Verifiable Presentation containing the LDP VC.
+ * @param metadata Metadata associated with the document.
+ * @return A PresentedDocument if parsing is successful, or null if parsing fails.
+ */
+fun parseLdpVcFromVp(
+    vp: VerifiablePresentation,
+    metadata: TransactionLog.Metadata,
+): PresentedDocument? {
+    return try {
+        val vpJson: JsonObject = when (vp) {
+            is VerifiablePresentation.JsonObj -> vp.value
+            is VerifiablePresentation.Generic -> Json.parseToJsonElement(vp.value).jsonObject
+            else -> return null
+        }
+
+        // Extract verifiableCredential array from the VP
+        val credentials = vpJson["verifiableCredential"]?.jsonArray ?: return null
+        val vcJson = credentials.firstOrNull()?.jsonObject ?: return null
+
+        // Extract type values for LdpVcFormat
+        val types = vcJson["type"]?.jsonArray
+            ?.map { it.jsonPrimitive.content }
+            ?: emptyList()
+
+        // Extract credentialSubject claims
+        val credentialSubject = vcJson["credentialSubject"]?.jsonObject ?: return null
+
+        val issuerMetadata = metadata.issuerMetadata
+            ?.let { IssuerMetadata.fromJson(it).getOrNull() }
+
+        val presentedClaims = credentialSubject.entries.map { (key, value) ->
+            PresentedClaim(
+                path = listOf("credentialSubject", key),
+                value = value.jsonPrimitive?.content,
+                rawValue = value.toString(),
+                metadata = findClaimMetadataForLdpVc(
+                    listOf("credentialSubject", key),
+                    issuerMetadata
+                ),
+            )
+        }
+
+        PresentedDocument(
+            format = LdpVcFormat(types = types),
+            claims = presentedClaims,
+            metadata = issuerMetadata
+        )
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Finds claim metadata for an LDP VC claim path.
+ *
+ * @param path the claim path (e.g. ["credentialSubject", "name"])
+ * @param metadata the issuer metadata
+ * @return the claim metadata if found
+ */
+fun findClaimMetadataForLdpVc(
     path: List<String>,
     metadata: IssuerMetadata?,
 ): IssuerMetadata.Claim? {

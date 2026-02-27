@@ -18,6 +18,7 @@ package eu.europa.ec.eudi.wallet.statium
 
 import eu.europa.ec.eudi.statium.StatusReference
 import eu.europa.ec.eudi.wallet.document.IssuedDocument
+import eu.europa.ec.eudi.wallet.document.format.LdpVcFormat
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
 import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
@@ -39,11 +40,14 @@ fun interface StatusReferenceExtractor {
  * It supports the following formats:
  * - [MsoMdocFormat]
  * - [SdJwtVcFormat]
+ * - [W3CJwtFormat]
+ * - [LdpVcFormat]
  *
  * It delegates the extraction to the appropriate extractor based on the document format.
  *
  * @see [MsoMdocStatusReferenceExtractor]
  * @see [SdJwtStatusReferenceExtractor]
+ * @see [LdpVcStatusReferenceExtractor]
  */
 object DefaultStatusReferenceExtractor : StatusReferenceExtractor {
     /**
@@ -57,6 +61,7 @@ object DefaultStatusReferenceExtractor : StatusReferenceExtractor {
             is MsoMdocFormat -> MsoMdocStatusReferenceExtractor
             is SdJwtVcFormat -> SdJwtStatusReferenceExtractor
             is W3CJwtFormat -> JwtStatusReferenceExtractor
+            is LdpVcFormat -> LdpVcStatusReferenceExtractor
         }.extractStatusReference(document)
     }
 

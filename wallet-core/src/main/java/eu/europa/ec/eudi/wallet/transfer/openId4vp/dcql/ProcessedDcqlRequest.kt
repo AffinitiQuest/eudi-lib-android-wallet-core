@@ -21,6 +21,7 @@ import eu.europa.ec.eudi.iso18013.transfer.response.DisclosedDocuments
 import eu.europa.ec.eudi.iso18013.transfer.response.RequestProcessor
 import eu.europa.ec.eudi.iso18013.transfer.response.RequestedDocuments
 import eu.europa.ec.eudi.iso18013.transfer.response.ResponseResult
+import eu.europa.ec.eudi.openid4vci.FORMAT_W3C_JSONLD_DATA_INTEGRITY
 import eu.europa.ec.eudi.openid4vci.FORMAT_W3C_SIGNED_JWT
 import eu.europa.ec.eudi.openid4vp.Consensus
 import eu.europa.ec.eudi.openid4vp.ResolvedRequestObject
@@ -29,11 +30,13 @@ import eu.europa.ec.eudi.openid4vp.VerifiablePresentations
 import eu.europa.ec.eudi.openid4vp.dcql.QueryId
 import eu.europa.ec.eudi.wallet.document.DocumentManager
 import eu.europa.ec.eudi.wallet.document.IssuedDocument
+import eu.europa.ec.eudi.wallet.document.format.LdpVcFormat
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
 import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
 import eu.europa.ec.eudi.wallet.internal.getSessionTranscriptBytes
 import eu.europa.ec.eudi.wallet.internal.verifiablePresentationForJwtVc
+import eu.europa.ec.eudi.wallet.internal.verifiablePresentationForLdpVc
 import eu.europa.ec.eudi.wallet.internal.verifiablePresentationForMsoMdoc
 import eu.europa.ec.eudi.wallet.internal.verifiablePresentationForSdJwtVc
 import eu.europa.ec.eudi.wallet.transfer.openId4vp.FORMAT_MSO_MDOC
@@ -166,6 +169,7 @@ class ProcessedDcqlRequest(
             is MsoMdocFormat -> FORMAT_MSO_MDOC
             is SdJwtVcFormat -> FORMAT_SD_JWT_VC
             is W3CJwtFormat -> FORMAT_W3C_SIGNED_JWT
+            is LdpVcFormat -> FORMAT_W3C_JSONLD_DATA_INTEGRITY
         }
         require(format == documentFormat) {
             "Document with id $documentId is not of format $format"
@@ -197,6 +201,15 @@ class ProcessedDcqlRequest(
 
             FORMAT_W3C_SIGNED_JWT -> {
                 verifiablePresentationForJwtVc(
+                    resolvedRequestObject = resolvedRequestObject,
+                    document = document,
+                    disclosedDocument = disclosedDocument,
+                    signatureAlgorithm = signatureAlgorithm
+                )
+            }
+
+            FORMAT_W3C_JSONLD_DATA_INTEGRITY -> {
+                verifiablePresentationForLdpVc(
                     resolvedRequestObject = resolvedRequestObject,
                     document = document,
                     disclosedDocument = disclosedDocument,

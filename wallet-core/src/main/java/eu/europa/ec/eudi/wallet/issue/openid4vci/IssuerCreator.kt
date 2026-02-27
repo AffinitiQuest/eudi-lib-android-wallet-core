@@ -33,6 +33,7 @@ import eu.europa.ec.eudi.openid4vci.ParUsage
 import eu.europa.ec.eudi.openid4vci.RsaConfig
 import eu.europa.ec.eudi.openid4vci.clientAttestationPOPJWSAlgs
 import eu.europa.ec.eudi.wallet.document.format.DocumentFormat
+import eu.europa.ec.eudi.wallet.document.format.LdpVcFormat
 import eu.europa.ec.eudi.wallet.document.format.MsoMdocFormat
 import eu.europa.ec.eudi.wallet.document.format.SdJwtVcFormat
 import eu.europa.ec.eudi.wallet.document.format.W3CJwtFormat
@@ -99,6 +100,7 @@ internal class IssuerCreator(
             is MsoMdocFormat -> DocTypeFilter(documentFormat.docType)
             is SdJwtVcFormat -> VctFilter(documentFormat.vct)
             is W3CJwtFormat -> TypeFilter(documentFormat.types)
+            is LdpVcFormat -> TypeFilter(documentFormat.types)
         }
         val (issuerMetadata, authorizationServerMetadata) = CredentialIssuerId(issuerUrl)
             .map { getIssuerMetadata(it) }
