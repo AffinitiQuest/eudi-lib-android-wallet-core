@@ -66,7 +66,7 @@ import org.multipaz.crypto.Algorithm
 class ProcessedDcqlRequest(
     val resolvedRequestObject: ResolvedRequestObject,
     private val documentManager: DocumentManager,
-    private val queryMap: RequestedDocumentsByQueryId,
+    val queryMap: RequestedDocumentsByQueryId,
     val msoMdocNonce: String,
 ) : RequestProcessor.ProcessedRequest.Success(RequestedDocuments(queryMap.flatMap { it.value.requestedDocuments })) {
     /**
@@ -171,7 +171,7 @@ class ProcessedDcqlRequest(
             is W3CJwtFormat -> FORMAT_W3C_SIGNED_JWT
             is LdpVcFormat -> FORMAT_W3C_JSONLD_DATA_INTEGRITY
         }
-        require(format == documentFormat) {
+        require(format == documentFormat || (format == "vc+jwt" && documentFormat == FORMAT_W3C_SIGNED_JWT)) {
             "Document with id $documentId is not of format $format"
         }
 
@@ -199,7 +199,7 @@ class ProcessedDcqlRequest(
                 )
             }
 
-            FORMAT_W3C_SIGNED_JWT -> {
+            FORMAT_W3C_SIGNED_JWT, "vc+jwt" -> {
                 verifiablePresentationForJwtVc(
                     resolvedRequestObject = resolvedRequestObject,
                     document = document,

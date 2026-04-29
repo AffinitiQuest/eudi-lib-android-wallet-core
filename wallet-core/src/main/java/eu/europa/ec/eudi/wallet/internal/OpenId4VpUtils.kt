@@ -95,6 +95,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -396,7 +397,7 @@ internal suspend fun SdJwt<JwtAndClaims>.serializeWithKeyBinding(
         signAlgorithm = algorithm,
         publicKey = JWK.parseFromPEMEncodedObjects(publicKey.toPem()) as AsymmetricJWK
     ) {
-        audience(clientId.clientId)
+        audience(clientId.originalClientId)
         claim("nonce", nonce)
         issueTime(issueDate)
     }
@@ -463,157 +464,168 @@ internal fun verifiablePresentationForJwtVc(
     document: IssuedDocument,
     disclosedDocument: DisclosedDocument,
     signatureAlgorithm: Algorithm,
-): VerifiablePresentation.JsonObj {
-    val idToken = getIdToken(document, disclosedDocument.keyUnlockData, resolvedRequestObject.client.id, resolvedRequestObject.nonce, signatureAlgorithm, Date())
-    var content =
-        JsonObject(
-            mapOf(
-                "@context" to JsonArray(listOf(JsonPrimitive("https://www.w3.org/2018/credentials/v1"))),
-                "type" to JsonArray(listOf(JsonPrimitive("VerifiablePresentation"))),
-                "vp" to JsonObject(mapOf("verifiableCredential" to JsonArray(listOf(JsonPrimitive(String(document.issuerProvidedData)))))),
-                "proof" to JsonObject(mapOf("type" to JsonPrimitive("ES256"), "proofPurpose" to JsonPrimitive("authentication"), "jws" to JsonPrimitive(idToken) ))
-            )
+): VerifiablePresentation.Generic {
+    val vpJwt = runBlocking {
+        val algorithm = JWSAlgorithm.parse(signatureAlgorithm.joseAlgorithmIdentifier)
+        val publicKey = JWK.parseFromPEMEncodedObjects(document.keyInfo.publicKey.toPem()) as AsymmetricJWK
+
+        val signer = object : JWSSigner {
+            override fun getJCAContext(): JCAContext = JCAContext()
+            override fun supportedJWSAlgorithms(): Set<JWSAlgorithm> = setOf(algorithm)
+            override fun sign(header: JWSHeader, signingInput: ByteArray): Base64URL {
+                val signature = document.sign(signingInput, disclosedDocument.keyUnlockData).getOrThrow()
+                return Base64URL.encode(signature.toJoseEncoded(algorithm))
+            }
+        }
+
+        // Derive holder DID from public key JWK
+        val jwkJson = (publicKey as JWK).toJSONString()
+        val encodedJwk = Base64URL.encode(jwkJson.encodeToByteArray())
+        val holderDid = "did:jwk:$encodedJwk"
+
+        val vcJwt = String(document.issuerProvidedData)
+        val now = Date()
+
+        val header = JWSHeader.Builder(algorithm).apply {
+            type(JOSEObjectType("JWT"))
+            keyID("$holderDid#0")
+        }.build()
+
+        val vpClaim = mapOf(
+            "@context" to listOf("https://www.w3.org/2018/credentials/v1"),
+            "type" to listOf("VerifiablePresentation"),
+            "verifiableCredential" to listOf(vcJwt)
         )
-    val o = JsonObject(emptyMap())
-    val jsonObject = JsonObject(content)
-    return VerifiablePresentation.JsonObj(jsonObject)
+
+        val claimSet = JWTClaimsSet.Builder().apply {
+            issuer(holderDid)
+            audience(resolvedRequestObject.client.id.originalClientId)
+            issueTime(now)
+            expirationTime(Date(now.time + 300_000))
+            claim("nonce", resolvedRequestObject.nonce)
+            jwtID("urn:uuid:${java.util.UUID.randomUUID()}")
+            claim("vp", vpClaim)
+        }.build()
+
+        SignedJWT(header, claimSet).apply { sign(signer) }.serialize()
+    }
+    return VerifiablePresentation.Generic(vpJwt)
 }
 
 /**
  * Constructs a verifiable presentation for an LDP VC (W3C JSON-LD Data Integrity) credential.
  *
- * Supports both VCDM 1.1 and VCDM 2.0 contexts by detecting the `@context` from the credential.
+ * Produces a Data Integrity proof using ecdsa-jcs-2019:
+ * - Signing input = SHA-256(JCS(proofOptions)) || SHA-256(JCS(vp))
+ * - proofValue = multibase base58-btc encoded DER signature
+ *
+ * Mirrors the iOS getLdpVcPresentation implementation.
  *
  * @param resolvedRequestObject The resolved OpenID4VP authorization request.
  * @param document The issued document containing the credential.
  * @param disclosedDocument The document with disclosed claims.
  * @param signatureAlgorithm The algorithm to use for signing.
- * @return The constructed [VerifiablePresentation.JsonObj].
+ * @return The constructed [VerifiablePresentation.Generic] containing the VP JSON string.
  */
-internal fun verifiablePresentationForLdpVc(
+internal suspend fun verifiablePresentationForLdpVc(
     resolvedRequestObject: ResolvedRequestObject,
     document: IssuedDocument,
     disclosedDocument: DisclosedDocument,
     signatureAlgorithm: Algorithm,
-): VerifiablePresentation.JsonObj {
-    val idToken = getIdToken(
-        document,
-        disclosedDocument.keyUnlockData,
-        resolvedRequestObject.client.id,
-        resolvedRequestObject.nonce,
-        signatureAlgorithm,
-        Date()
-    )
+): VerifiablePresentation.Generic {
+    // Derive holder DID from public key JWK
+    val publicKey = JWK.parseFromPEMEncodedObjects(document.keyInfo.publicKey.toPem()) as AsymmetricJWK
+    val jwkJson = (publicKey as JWK).toJSONString()
+    val encodedJwk = Base64URL.encode(jwkJson.encodeToByteArray())
+    val holderDid = "did:jwk:$encodedJwk#0"
 
-    val credentialString = String(document.issuerProvidedData)
-    val credentialJson = Json.parseToJsonElement(credentialString).jsonObject
+    val credentialJson = Json.parseToJsonElement(String(document.issuerProvidedData)).sortedKeys()
 
-    // Detect VCDM version from the credential's @context
-    val credentialContext = credentialJson["@context"]?.jsonArray
-    val vcdm2Context = "https://www.w3.org/ns/credentials/v2"
-    val vcdm1Context = "https://www.w3.org/2018/credentials/v1"
-    val vpContext = if (credentialContext?.any {
-            it.jsonPrimitive.content == vcdm2Context
-        } == true) {
-        vcdm2Context
-    } else {
-        vcdm1Context
+    val nonce = resolvedRequestObject.nonce
+    val aud = resolvedRequestObject.client.id.originalClientId
+
+    val now = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).run {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+        format(Date())
     }
 
-    // Map signature algorithm to cryptosuite name
-    val cryptosuite = when (signatureAlgorithm) {
-        Algorithm.ES256, Algorithm.ESP256 -> "ecdsa-rdfc-2019"
-        Algorithm.ES384, Algorithm.ESP384 -> "ecdsa-rdfc-2019"
-        Algorithm.ED25519, Algorithm.EDDSA -> "eddsa-rdfc-2022"
-        else -> "ecdsa-rdfc-2019"
-    }
+    // Build VP without proof (for signing)
+    val vp = JsonObject(sortedMapOf(
+        "@context" to JsonArray(listOf(JsonPrimitive("https://www.w3.org/2018/credentials/v1"))),
+        "type" to JsonArray(listOf(JsonPrimitive("VerifiablePresentation"))),
+        "verifiableCredential" to JsonArray(listOf(credentialJson))
+    ))
 
-    val content = JsonObject(
-        mapOf(
-            "@context" to JsonArray(listOf(JsonPrimitive(vpContext))),
-            "type" to JsonArray(listOf(JsonPrimitive("VerifiablePresentation"))),
-            "verifiableCredential" to JsonArray(listOf(credentialJson)),
-            "proof" to JsonObject(
-                mapOf(
-                    "type" to JsonPrimitive("DataIntegrityProof"),
-                    "cryptosuite" to JsonPrimitive(cryptosuite),
-                    "proofPurpose" to JsonPrimitive("authentication"),
-                    "jws" to JsonPrimitive(idToken)
-                )
-            )
-        )
-    )
-    return VerifiablePresentation.JsonObj(content)
+    // Build proof options (no proofValue yet)
+    val proofOptions = JsonObject(sortedMapOf(
+        "challenge" to JsonPrimitive(nonce),
+        "created" to JsonPrimitive(now),
+        "cryptosuite" to JsonPrimitive("ecdsa-jcs-2019"),
+        "domain" to JsonPrimitive(aud),
+        "proofPurpose" to JsonPrimitive("authentication"),
+        "type" to JsonPrimitive("DataIntegrityProof"),
+        "verificationMethod" to JsonPrimitive(holderDid)
+    ))
+
+    // Signing input per ecdsa-jcs-2019: SHA-256(JCS(proofOptions)) || SHA-256(JCS(vp))
+    val sha256 = MessageDigest.getInstance("SHA-256")
+    val proofHash = sha256.digest(proofOptions.toString().encodeToByteArray())
+    sha256.reset()
+    val vpHash = sha256.digest(vp.toString().encodeToByteArray())
+    val signingInput = proofHash + vpHash
+
+    // Sign with document key — encode as raw r||s (IEEE P1363, 64 bytes for P-256)
+    // WebCrypto subtle.verify requires P1363 format, NOT DER
+    val signatureBytes = document.signConsumingCredential(signingInput, disclosedDocument.keyUnlockData)
+        .getOrThrow()
+        .toCoseEncoded()
+
+    // Encode as multibase base58-btc (prefix 'z')
+    val proofValue = "z" + base58Encode(signatureBytes)
+
+    // Assemble final VP with completed proof
+    val proof = JsonObject(sortedMapOf(
+        "challenge" to JsonPrimitive(nonce),
+        "created" to JsonPrimitive(now),
+        "cryptosuite" to JsonPrimitive("ecdsa-jcs-2019"),
+        "domain" to JsonPrimitive(aud),
+        "proofPurpose" to JsonPrimitive("authentication"),
+        "proofValue" to JsonPrimitive(proofValue),
+        "type" to JsonPrimitive("DataIntegrityProof"),
+        "verificationMethod" to JsonPrimitive(holderDid)
+    ))
+
+    val vpWithProof = JsonObject(sortedMapOf(
+        "@context" to JsonArray(listOf(JsonPrimitive("https://www.w3.org/2018/credentials/v1"))),
+        "proof" to proof,
+        "type" to JsonArray(listOf(JsonPrimitive("VerifiablePresentation"))),
+        "verifiableCredential" to JsonArray(listOf(credentialJson))
+    ))
+
+    return VerifiablePresentation.Generic(vpWithProof.toString())
 }
 
-private fun getIdToken(
-    document: IssuedDocument,
-    keyUnlockData: KeyUnlockData?,
-    clientId: VerifierId,
-    nonce: String,
-    signatureAlgorithm: Algorithm,
-    issueDate: Date,
-): String {
-    return runBlocking {
-        val algorithm = JWSAlgorithm.parse((signatureAlgorithm).joseAlgorithmIdentifier)
-        val aqJwtIssuer = aqJwtIssuer(
-            signer = object : JWSSigner {
-                override fun getJCAContext(): JCAContext = JCAContext()
-                override fun supportedJWSAlgorithms(): Set<JWSAlgorithm> = setOf(algorithm)
-                override fun sign(header: JWSHeader, signingInput: ByteArray): Base64URL {
-                    val signature =
-                        document.sign(signingInput, keyUnlockData)
-                            .getOrThrow()
-                    return Base64URL.encode(signature.toJoseEncoded(algorithm))
-                }
-            },
-            signAlgorithm = algorithm,
-            publicKey = JWK.parseFromPEMEncodedObjects(document.keyInfo.publicKey.toPem()) as AsymmetricJWK
-        ) {
-            audience(clientId.clientId)
-            claim("nonce", nonce)
-            issueTime(issueDate)
-        }
-        val digestAlgorithm = MessageDigest.getInstance(HashAlgorithm.SHA_256.name.uppercase())
-        val digest = digestAlgorithm.digest(String(document.issuerProvidedData).encodeToByteArray())
-        val digestString = JwtBase64.encode(digest)
-        aqJwtIssuer.invoke(digestString).getOrThrow()
-    }
+private fun JsonElement.sortedKeys(): JsonElement = when (this) {
+    is JsonObject -> JsonObject(keys.sorted().associateWith { key -> getValue(key).sortedKeys() })
+    is JsonArray -> JsonArray(map { it.sortedKeys() })
+    else -> this
 }
 
-fun interface BuildAqJwt {
-    suspend operator fun invoke(digest: String): Result<Jwt>
-}
+private val BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-
-
-fun aqJwtIssuer(
-    signer: JWSSigner,
-    signAlgorithm: JWSAlgorithm,
-    publicKey: AsymmetricJWK,
-    claimSetBuilderAction: JWTClaimsSet.Builder.() -> Unit = {},
-): BuildAqJwt = BuildAqJwt { digest ->
-    withContext(Dispatchers.IO) {
-        runCatching {
-            val header = JWSHeader.Builder(signAlgorithm).apply {
-                type(JOSEObjectType(SdJwtSpec.MEDIA_SUBTYPE_KB_JWT))
-                val pk = publicKey
-                if (pk is JWK) {
-                    val jsonEncodedString = pk.toJSONString()
-                    val byteArray = jsonEncodedString.encodeToByteArray()
-                    val encodedString = Base64URL.encode(byteArray)
-                    keyID("did:jwk:$encodedString#0")
-                }
-            }.build()
-
-            val claimSet = JWTClaimsSet.Builder().apply {
-                claimSetBuilderAction()
-                claim(SdJwtSpec.CLAIM_SD_HASH, digest)
-            }.build()
-
-            SignedJWT(header, claimSet).apply { sign(signer) }.serialize()
-        }
+private fun base58Encode(input: ByteArray): String {
+    var num = java.math.BigInteger(1, input)
+    val sb = StringBuilder()
+    val base = java.math.BigInteger.valueOf(58)
+    while (num.signum() > 0) {
+        val divRem = num.divideAndRemainder(base)
+        sb.append(BASE58_ALPHABET[divRem[1].toInt()])
+        num = divRem[0]
     }
+    for (byte in input) {
+        if (byte == 0.toByte()) sb.append(BASE58_ALPHABET[0]) else break
+    }
+    return sb.reverse().toString()
 }
 
 /**
@@ -701,7 +713,7 @@ internal class AQDidResolver: LookupPublicKeyByDIDUrl {
             for(method in methods) {
                 method.jsonObject?.let { vMethod ->
                     val vMethodKeyId = vMethod.get("id")?.jsonPrimitive?.content
-                    if(vMethodKeyId == "#$keyId") {
+                    if(vMethodKeyId == "#$keyId" || vMethodKeyId == didString) {
                         val keyDictionary = vMethod.get("publicKeyJwk")?.jsonObject.toString()
                         val jwk = JWK.parse(keyDictionary)
                         if(jwk is ECKey) {

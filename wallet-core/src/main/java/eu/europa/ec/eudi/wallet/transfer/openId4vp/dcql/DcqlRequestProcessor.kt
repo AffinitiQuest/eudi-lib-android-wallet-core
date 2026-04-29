@@ -163,7 +163,7 @@ class DcqlRequestProcessor(
                             )
                         }
 
-                        Format.W3CJwtVcJson -> {
+                        Format.W3CJwtVcJson, Format.W3CJwtVc -> {
                             // Handle JWT VC format credentials
                             val typeValues = query.metaJwtVc!!.typeValues
                             require(typeValues.isNotEmpty()) {
@@ -276,6 +276,7 @@ class DcqlRequestProcessor(
         val requestedDocuments = RequestedDocuments(documents.map { document ->
             RequestedDocument(
                 documentId = document.id,
+                format = Format.SdJwtVc.value,
                 // If no claims are specified, use all available claims in the document
                 requestedItems = requestedItems ?: (getAllClaimPathsFrom(
                     claims = document.data.claims.filterIsInstance<SdJwtVcClaim>(),
@@ -314,16 +315,13 @@ class DcqlRequestProcessor(
             SdJwtVcItem(path = claim.path.value.map { it.toString() }) to (claim.intentToRetain == true)
         }
 
-        // Find all documents that match any of the requested vctValues
-        val documents = runBlocking {
-            typeValues.flatMap {
-                findDocumentsByFormat(W3CJwtFormat(listOf(it.first())))
-            }
-        }
+        // Find all documents that match any of the requested typeValues option sets
+        val documents = runBlocking { findW3CJwtDocuments(typeValues) }
 
         val requestedDocuments = RequestedDocuments(documents.map { document ->
             RequestedDocument(
                 documentId = document.id,
+                format = Format.W3CJwtVcJson.value,
                 // If no claims are specified, use all available claims in the document
                 requestedItems = requestedItems ?: (getAllClaimPathsFrom(
                     claims = document.data.claims.filterIsInstance<SdJwtVcClaim>(),
@@ -359,16 +357,13 @@ class DcqlRequestProcessor(
             SdJwtVcItem(path = claim.path.value.map { it.toString() }) to (claim.intentToRetain == true)
         }
 
-        // Find all documents that match any of the requested type values
-        val documents = runBlocking {
-            typeValues.flatMap {
-                findDocumentsByFormat(LdpVcFormat(it))
-            }
-        }
+        // Find all documents that match any of the requested type values option sets
+        val documents = runBlocking { findLdpVcDocuments(typeValues) }
 
         val requestedDocuments = RequestedDocuments(documents.map { document ->
             RequestedDocument(
                 documentId = document.id,
+                format = Format.W3CLdpVc.value,
                 // If no claims are specified, use all available claims in the document
                 requestedItems = requestedItems ?: document.data.claims
                     .filterIsInstance<LdpVcClaim>()
@@ -415,6 +410,7 @@ class DcqlRequestProcessor(
         val requestedDocuments = RequestedDocuments(documents.map { document ->
             RequestedDocument(
                 documentId = document.id,
+                format = Format.MsoMdoc.value,
                 requestedItems = requestedItems ?: document.data.claims
                     .filterIsInstance<MsoMdocClaim>()
                     .associate {
@@ -427,6 +423,46 @@ class DcqlRequestProcessor(
             )
         })
         return requestedDocuments
+    }
+
+    /**
+     * Finds all issued W3C JWT documents whose types are a superset of any of the provided
+     * option sets. The outer list is OR (any set can match), the inner list is AND (all types
+     * in the set must be present in the document).
+     *
+     * @param typeOptionSets The type_values from the DCQL query (List<List<String>>)
+     * @return Deduplicated list of matching [IssuedDocument]s
+     */
+    private suspend fun findW3CJwtDocuments(typeOptionSets: List<List<String>>): List<IssuedDocument> {
+        return documentManager.getDocuments()
+            .filterIsInstance<IssuedDocument>()
+            .filter { it.findCredential() != null }
+            .filter { doc ->
+                val format = doc.format
+                format is W3CJwtFormat &&
+                    typeOptionSets.any { optionSet -> format.types.containsAll(optionSet) }
+            }
+            .distinctBy { it.id }
+    }
+
+    /**
+     * Finds all issued LDP VC documents whose types are a superset of any of the provided
+     * option sets. The outer list is OR (any set can match), the inner list is AND (all types
+     * in the set must be present in the document).
+     *
+     * @param typeOptionSets The type_values from the DCQL query (List<List<String>>)
+     * @return Deduplicated list of matching [IssuedDocument]s
+     */
+    private suspend fun findLdpVcDocuments(typeOptionSets: List<List<String>>): List<IssuedDocument> {
+        return documentManager.getDocuments()
+            .filterIsInstance<IssuedDocument>()
+            .filter { it.findCredential() != null }
+            .filter { doc ->
+                val format = doc.format
+                format is LdpVcFormat &&
+                    typeOptionSets.any { optionSet -> format.types.containsAll(optionSet) }
+            }
+            .distinctBy { it.id }
     }
 
     /**
